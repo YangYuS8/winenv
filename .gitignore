@@ -3,6 +3,8 @@
 .vscode/
 *.user
 *.log
+dist/
+node_modules/
 
 # Windows artifacts
 Thumbs.db

@@ -1,5 +1,9 @@
 # Winenv
 
+[![CI](https://github.com/YangYuS8/winenv/actions/workflows/ci.yml/badge.svg)](https://github.com/YangYuS8/winenv/actions/workflows/ci.yml)
+[![Release](https://github.com/YangYuS8/winenv/actions/workflows/release.yml/badge.svg)](https://github.com/YangYuS8/winenv/actions/workflows/release.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/YangYuS8/winenv)](https://github.com/YangYuS8/winenv/releases/latest)
+
 这是一个先服务于个人使用的 Windows 11 软件管理层。它不修改 Windows 镜像，也不试图替代 WinGet、Scoop 或 mise；它只负责规定每类软件归谁管理，并提供一个稳定入口。
 
 当前默认清单参考了这台 Omarchy 电脑的实际使用习惯：
@@ -12,37 +16,30 @@
 
 ## 第一次使用
 
-在一台新的 Windows 11 上，先克隆仓库：
+在一台新的 Windows 11 上打开普通 PowerShell，执行一条命令：
 
 ```powershell
-git clone https://github.com/YangYuS8/winenv.git
-cd winenv
+irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1 | iex
 ```
 
-然后在普通 PowerShell 窗口中执行：
+安装器会自动：
+
+1. 从 GitHub Releases 获取最新稳定版；
+2. 下载 `winenv-<version>.zip` 和 `SHA256SUMS`；
+3. 校验 SHA-256 后安装到 `%LOCALAPPDATA%\Winenv\versions`；
+4. 建立全局短命令 `win`；
+5. 按 `profile.json` 应用默认个人环境。
+
+如果只想安装 `win` 命令、暂时不安装清单中的软件：
 
 ```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-./win.ps1 list
-./win.ps1 doctor
-./win.ps1 install
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1))) -ToolOnly
 ```
 
-这是唯一一次需要输入完整脚本名。安装完成并重新打开 PowerShell 后，会得到全局的短命令 `win`。
-
-`install` 会：
-
-1. 检查 Windows 自带的 WinGet；
-2. 使用 WinGet 安装 mise；
-3. 在确实需要 Scoop 时，显示 Scoop 官方安装脚本的 SHA-256，并在执行前询问；
-4. 按 `profile.json` 安装默认 profiles 中的软件；
-5. 为 Windows PowerShell 和 PowerShell 7 写入幂等的 mise 激活区块；
-6. 执行尚未应用的 migrations。
-
-如需无人值守确认 Scoop 官方安装脚本，可加 `-Yes`：
+也可以安装指定版本：
 
 ```powershell
-./win.ps1 install -Yes
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1))) -Version 0.1.0
 ```
 
 ## 日常使用
@@ -56,6 +53,10 @@ win doctor
 
 # 预览并统一更新
 win up
+
+# 查看或只更新 Winenv 本身
+win version
+win selfup
 
 # 安装额外的 editor profile
 win add -Profiles editor
@@ -72,7 +73,7 @@ win clean
 
 完整动作名仍然可用，例如 `win update`、`win install` 和 `win remove vscode`。
 
-`update` 会依次处理 WinGet、Scoop、mise 和 migrations，但只更新当前 profiles 中登记的软件，也不会自动删除旧版本。更新前会展示这次受管理的更新范围；除非传入 `-Yes`，否则会要求确认。
+`update` 会先更新 Winenv 本身，再依次处理 WinGet、Scoop、mise 和 migrations。它只更新当前 profiles 中登记的软件，也不会自动删除旧版本。更新前会展示这次受管理的更新范围；除非传入 `-Yes`，否则会要求确认。
 
 ## 默认 profiles
 
@@ -90,7 +91,7 @@ win clean
 可在命令行临时选择 profiles：
 
 ```powershell
-./win.ps1 install -Profiles base,desktop,development
+win add -Profiles base,desktop,development
 ```
 
 也可以直接修改 `profile.json` 中的 `defaultProfiles`。
@@ -110,10 +111,14 @@ win clean
 
 ```text
 winenv/
-├── win.ps1              # 首次安装入口
+├── install.ps1          # 一行安装和自更新入口
+├── win.ps1              # 核心命令
+├── VERSION              # Actions 自动维护的版本
 ├── profile.json         # 软件及其唯一所有者
 ├── profile.schema.json  # 清单结构
-└── migrations/          # 只执行一次的演进脚本
+├── migrations/          # 只执行一次的演进脚本
+├── scripts/             # 测试和发布资产构建
+└── .github/workflows/   # CI 与自动发布
 ```
 
 运行状态保存在：
@@ -123,6 +128,31 @@ winenv/
 ```
 
 这个文件只记录已执行的 migration，不存储密码或登录状态。
+
+## 版本和发布
+
+版本、CHANGELOG、Git tag、GitHub Release、ZIP 和 SHA-256 全部由 GitHub Actions 根据提交记录生成，不手工修改版本号或编写发布日志。
+
+提交信息使用 Conventional Commits：
+
+```text
+fix: 修复安装器路径                         # patch
+feat: 添加新的软件 profile                  # minor
+feat!: 修改不兼容的配置结构                 # major
+docs: 补充说明                              # 不发布
+chore: 更新维护配置                         # 不发布
+```
+
+推送或合并到 `main` 后，Release workflow 会：
+
+1. 验证 JSON schema、软件归属和 PowerShell 语法；
+2. 分析上一个 tag 之后的提交；
+3. 自动决定下一个语义化版本；
+4. 更新 `VERSION` 和 `CHANGELOG.md`；
+5. 创建版本提交和 `v<version>` tag；
+6. 创建 GitHub Release，并上传 ZIP 与 `SHA256SUMS`。
+
+因此正常开发只需要写准确的 `feat:`、`fix:` 等提交信息。
 
 ## 当前边界
 

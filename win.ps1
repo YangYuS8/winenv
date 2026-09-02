@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("list", "ls", "doctor", "check", "install", "add", "update", "up", "remove", "rm", "cleanup", "clean", "migrate")]
+    [ValidateSet("list", "ls", "doctor", "check", "install", "add", "update", "up", "remove", "rm", "cleanup", "clean", "migrate", "version", "self-update", "selfup")]
     [string]$Action = "list",
 
     [string[]]$Profiles,
@@ -13,6 +13,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProfilePath = Join-Path $PSScriptRoot "profile.json"
+$VersionPath = Join-Path $PSScriptRoot "VERSION"
 $MigrationPath = Join-Path $PSScriptRoot "migrations"
 $StateRoot = Join-Path $env:LOCALAPPDATA "Winenv"
 $StatePath = Join-Path $StateRoot "state.json"
@@ -24,6 +25,7 @@ $ActionAliases = @{
     "up" = "update"
     "rm" = "remove"
     "clean" = "cleanup"
+    "selfup" = "self-update"
 }
 
 if ($ActionAliases.ContainsKey($Action)) {
@@ -42,6 +44,26 @@ function Write-Plan {
     } else {
         Write-Host $Message -ForegroundColor DarkGray
     }
+}
+
+function Show-WinenvVersion {
+    if (Test-Path $VersionPath) {
+        Write-Output ((Get-Content -Raw -Path $VersionPath).Trim())
+    } else {
+        Write-Output "development"
+    }
+}
+
+function Update-WinenvSelf {
+    $installerPath = Join-Path $PSScriptRoot "install.ps1"
+    if (-not (Test-Path $installerPath)) {
+        throw "Self-update installer not found: $installerPath"
+    }
+
+    Write-Step "Updating Winenv"
+    Write-Plan "$installerPath -ToolOnly"
+    if ($DryRun) { return }
+    & $installerPath -ToolOnly
 }
 
 function Invoke-Native {
@@ -211,10 +233,15 @@ function Enable-WinenvInPowerShell {
     $startMarker = "# >>> winenv shell >>>"
     $endMarker = "# <<< winenv shell <<<"
     $escapedScriptPath = $PSCommandPath.Replace("'", "''")
+    $stableLauncherPath = (Join-Path $StateRoot "bin\win-launch.ps1").Replace("'", "''")
     $block = @"
 $startMarker
 function win {
-    & '$escapedScriptPath' @args
+    if (Test-Path '$stableLauncherPath') {
+        & '$stableLauncherPath' @args
+    } else {
+        & '$escapedScriptPath' @args
+    }
 }
 
 if (Get-Command mise -ErrorAction SilentlyContinue) {
@@ -379,6 +406,7 @@ function Test-ProfileHealth {
 
 function Update-All {
     param($Definition)
+    Update-WinenvSelf
     Ensure-WinGet
     $selectedPackages = Get-SelectedPackages $Definition
     $wingetPackages = @($selectedPackages | Where-Object { $_.owner -eq "winget" })
@@ -486,6 +514,8 @@ switch ($Action) {
         Write-Host "`nInstall completed. Open a new PowerShell window and run 'win doctor'." -ForegroundColor Green
     }
     "update" { Update-All $definition }
+    "version" { Show-WinenvVersion }
+    "self-update" { Update-WinenvSelf }
     "remove" { Remove-ManagedPackage $definition }
     "cleanup" { Invoke-Cleanup }
     "migrate" { Invoke-Migrations }
