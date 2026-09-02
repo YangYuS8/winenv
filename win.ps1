@@ -226,6 +226,13 @@ function Ensure-Scoop {
 
 function Enable-WinenvInPowerShell {
     $documents = [Environment]::GetFolderPath("MyDocuments")
+    if ([string]::IsNullOrWhiteSpace($documents)) {
+        if ($DryRun) {
+            $documents = Join-Path ([IO.Path]::GetTempPath()) "WinenvDocuments"
+        } else {
+            throw "Windows Documents directory could not be resolved."
+        }
+    }
     $profilePaths = @(
         (Join-Path $documents "WindowsPowerShell\profile.ps1"),
         (Join-Path $documents "PowerShell\profile.ps1")
