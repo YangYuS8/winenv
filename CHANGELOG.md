@@ -1,3 +1,10 @@
+# [0.2.0](https://github.com/YangYuS8/winenv/compare/v0.1.0...v0.2.0) (2026-09-02)
+
+
+### Features
+
+* search package catalogs before installation ([36eae75](https://github.com/YangYuS8/winenv/commit/36eae75fef3f27725beb33ffd0773231da68951a))
+
 # [0.1.0](https://github.com/YangYuS8/winenv/compare/v0.0.0...v0.1.0) (2026-09-02)
 
 
