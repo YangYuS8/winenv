@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Windows Profile",
+  "type": "object",
+  "required": ["schemaVersion", "name", "defaultProfiles", "scoopBuckets", "packages"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {"type": "string"},
+    "schemaVersion": {"const": 1},
+    "name": {"type": "string", "minLength": 1},
+    "defaultProfiles": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "scoopBuckets": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "packages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "displayName", "owner", "id", "profiles", "commands"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+          "displayName": {"type": "string", "minLength": 1},
+          "owner": {"enum": ["winget", "scoop", "mise", "vendor"]},
+          "id": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "minLength": 1},
+          "bucket": {"type": "string", "minLength": 1},
+          "version": {"type": "string", "minLength": 1},
+          "profiles": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1},
+            "uniqueItems": true
+          },
+          "commands": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "uniqueItems": true
+          },
+          "instructions": {"type": "string"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,244 @@
+{
+  "$schema": "./profile.schema.json",
+  "schemaVersion": 1,
+  "name": "yangyus8-windows",
+  "defaultProfiles": [
+    "base",
+    "desktop",
+    "china",
+    "gaming",
+    "cli",
+    "development"
+  ],
+  "scoopBuckets": [
+    "main",
+    "extras"
+  ],
+  "packages": [
+    {
+      "key": "powershell",
+      "displayName": "PowerShell 7",
+      "owner": "winget",
+      "id": "Microsoft.PowerShell",
+      "source": "winget",
+      "profiles": ["base"],
+      "commands": ["pwsh"]
+    },
+    {
+      "key": "terminal",
+      "displayName": "Windows Terminal",
+      "owner": "winget",
+      "id": "Microsoft.WindowsTerminal",
+      "source": "winget",
+      "profiles": ["base"],
+      "commands": ["wt"]
+    },
+    {
+      "key": "git",
+      "displayName": "Git for Windows",
+      "owner": "winget",
+      "id": "Git.Git",
+      "source": "winget",
+      "profiles": ["base"],
+      "commands": ["git"]
+    },
+    {
+      "key": "chrome",
+      "displayName": "Google Chrome",
+      "owner": "winget",
+      "id": "Google.Chrome",
+      "source": "winget",
+      "profiles": ["desktop"],
+      "commands": []
+    },
+    {
+      "key": "obsidian",
+      "displayName": "Obsidian",
+      "owner": "winget",
+      "id": "Obsidian.Obsidian",
+      "source": "winget",
+      "profiles": ["desktop"],
+      "commands": []
+    },
+    {
+      "key": "qq",
+      "displayName": "Tencent QQ",
+      "owner": "winget",
+      "id": "Tencent.QQ",
+      "source": "winget",
+      "profiles": ["china"],
+      "commands": []
+    },
+    {
+      "key": "wechat",
+      "displayName": "Tencent WeChat",
+      "owner": "winget",
+      "id": "Tencent.WeChat",
+      "source": "winget",
+      "profiles": ["china"],
+      "commands": []
+    },
+    {
+      "key": "flclash",
+      "displayName": "FlClash",
+      "owner": "winget",
+      "id": "chen08209.FlClash",
+      "source": "winget",
+      "profiles": ["china"],
+      "commands": []
+    },
+    {
+      "key": "steam",
+      "displayName": "Steam",
+      "owner": "winget",
+      "id": "Valve.Steam",
+      "source": "winget",
+      "profiles": ["gaming"],
+      "commands": []
+    },
+    {
+      "key": "vscode",
+      "displayName": "Visual Studio Code",
+      "owner": "winget",
+      "id": "Microsoft.VisualStudioCode",
+      "source": "winget",
+      "profiles": ["editor"],
+      "commands": ["code"]
+    },
+    {
+      "key": "bat",
+      "displayName": "bat",
+      "owner": "scoop",
+      "id": "bat",
+      "bucket": "main",
+      "profiles": ["cli"],
+      "commands": ["bat"]
+    },
+    {
+      "key": "eza",
+      "displayName": "eza",
+      "owner": "scoop",
+      "id": "eza",
+      "bucket": "main",
+      "profiles": ["cli"],
+      "commands": ["eza"]
+    },
+    {
+      "key": "fd",
+      "displayName": "fd",
+      "owner": "scoop",
+      "id": "fd",
+      "bucket": "main",
+      "profiles": ["cli"],
+      "commands": ["fd"]
+    },
+    {
+      "key": "fzf",
+      "displayName": "fzf",
+      "owner": "scoop",
+      "id": "fzf",
+      "bucket": "main",
+      "profiles": ["cli"],
+      "commands": ["fzf"]
+    },
+    {
+      "key": "ripgrep",
+      "displayName": "ripgrep",
+      "owner": "scoop",
+      "id": "ripgrep",
+      "bucket": "main",
+      "profiles": ["cli"],
+      "commands": ["rg"]
+    },
+    {
+      "key": "jq",
+      "displayName": "jq",
+      "owner": "scoop",
+      "id": "jq",
+      "bucket": "main",
+      "profiles": ["cli"],
+      "commands": ["jq"]
+    },
+    {
+      "key": "fastfetch",
+      "displayName": "fastfetch",
+      "owner": "scoop",
+      "id": "fastfetch",
+      "bucket": "main",
+      "profiles": ["cli"],
+      "commands": ["fastfetch"]
+    },
+    {
+      "key": "btop",
+      "displayName": "btop",
+      "owner": "scoop",
+      "id": "btop",
+      "bucket": "main",
+      "profiles": ["cli"],
+      "commands": ["btop"]
+    },
+    {
+      "key": "lazygit",
+      "displayName": "lazygit",
+      "owner": "scoop",
+      "id": "lazygit",
+      "bucket": "extras",
+      "profiles": ["cli"],
+      "commands": ["lazygit"]
+    },
+    {
+      "key": "codex",
+      "displayName": "Codex CLI",
+      "owner": "mise",
+      "id": "codex",
+      "version": "latest",
+      "profiles": ["development"],
+      "commands": ["codex"]
+    },
+    {
+      "key": "gh",
+      "displayName": "GitHub CLI",
+      "owner": "mise",
+      "id": "gh",
+      "version": "latest",
+      "profiles": ["development"],
+      "commands": ["gh"]
+    },
+    {
+      "key": "go",
+      "displayName": "Go",
+      "owner": "mise",
+      "id": "go",
+      "version": "latest",
+      "profiles": ["development"],
+      "commands": ["go"]
+    },
+    {
+      "key": "java",
+      "displayName": "Java",
+      "owner": "mise",
+      "id": "java",
+      "version": "latest",
+      "profiles": ["development"],
+      "commands": ["java"]
+    },
+    {
+      "key": "node",
+      "displayName": "Node.js",
+      "owner": "mise",
+      "id": "node",
+      "version": "26",
+      "profiles": ["development"],
+      "commands": ["node", "npm", "npx"]
+    },
+    {
+      "key": "python",
+      "displayName": "Python",
+      "owner": "mise",
+      "id": "python",
+      "version": "latest",
+      "profiles": ["development"],
+      "commands": ["python", "python3"]
+    }
+  ]
+}

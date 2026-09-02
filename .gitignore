@@ -1,0 +1,9 @@
+# Local runtime state and editor files
+.idea/
+.vscode/
+*.user
+*.log
+
+# Windows artifacts
+Thumbs.db
+Desktop.ini
