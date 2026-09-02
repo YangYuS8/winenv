@@ -48,10 +48,12 @@ jobs:
         id: published
         shell: pwsh
         run: |
-          $releaseTag = git tag --points-at HEAD --list "v*" | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0) {
+          $releaseTags = @(git tag --points-at HEAD --list "v*")
+          $gitExitCode = $LASTEXITCODE
+          if ($gitExitCode -ne 0) {
               throw "Unable to inspect release tags."
           }
+          $releaseTag = $releaseTags | Select-Object -First 1
 
           $wasPublished = -not [string]::IsNullOrWhiteSpace($releaseTag)
           "value=$($wasPublished.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
