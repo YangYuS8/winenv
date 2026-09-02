@@ -43,3 +43,26 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run release
+
+      - name: Detect a newly published release
+        id: published
+        shell: pwsh
+        run: |
+          $releaseTag = git tag --points-at HEAD --list "v*" | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to inspect release tags."
+          }
+
+          $wasPublished = -not [string]::IsNullOrWhiteSpace($releaseTag)
+          "value=$($wasPublished.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+          if ($wasPublished) {
+              Write-Host "Published release $releaseTag; installation smoke test will run."
+          } else {
+              Write-Host "No release was published; installation smoke test will be skipped."
+          }
+
+      - name: Install the newly published release
+        if: steps.published.outputs.value == 'true'
+        shell: pwsh
+        run: ./scripts/smoke-install.ps1
