@@ -45,6 +45,13 @@ irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1 | iex
 ## 日常使用
 
 ```powershell
+# 同时搜索 Winenv 清单、WinGet、Scoop 和 mise
+win search ripgrep
+
+# 只搜索某一个来源
+win search vscode -Manager winget
+win find node -Manager mise
+
 # 查看归属和当前选中的 profiles
 win ls
 
@@ -61,6 +68,9 @@ win selfup
 # 安装额外的 editor profile
 win add -Profiles editor
 
+# 安装清单中的单个软件
+win add vscode
+
 # 只显示将要执行的操作
 win add -DryRun
 
@@ -72,6 +82,8 @@ win clean
 ```
 
 完整动作名仍然可用，例如 `win update`、`win install` 和 `win remove vscode`。
+
+`search` 参考 Omarchy 的包选择器，不自行维护一份容易过期的远程索引：它先显示 `profile.json` 中已经确定归属的软件，再查询各个包管理器的实时目录。清单中的结果会直接给出 `win add <key>`；外部目录结果用于确认准确的包 ID 和应该使用的管理器，再决定是否将它纳入 `profile.json`。使用 `-Manager managed|winget|scoop|mise` 可以缩小搜索范围。
 
 `update` 会先更新 Winenv 本身，再依次处理 WinGet、Scoop、mise 和 migrations。它只更新当前 profiles 中登记的软件，也不会自动删除旧版本。更新前会展示这次受管理的更新范围；除非传入 `-Yes`，否则会要求确认。
 

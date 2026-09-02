@@ -1,12 +1,15 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("list", "ls", "doctor", "check", "install", "add", "update", "up", "remove", "rm", "cleanup", "clean", "migrate", "version", "self-update", "selfup")]
+    [ValidateSet("list", "ls", "search", "find", "doctor", "check", "install", "add", "update", "up", "remove", "rm", "cleanup", "clean", "migrate", "version", "self-update", "selfup")]
     [string]$Action = "list",
 
     [string[]]$Profiles,
     [Parameter(Position = 1)]
-    [string]$PackageKey,
+    [Alias("PackageKey", "Query")]
+    [string]$Target,
+    [ValidateSet("all", "managed", "winget", "scoop", "mise")]
+    [string]$Manager = "all",
     [switch]$DryRun,
     [switch]$Yes
 )
@@ -20,6 +23,7 @@ $StatePath = Join-Path $StateRoot "state.json"
 $AllowedOwners = @("winget", "scoop", "mise", "vendor")
 $ActionAliases = @{
     "ls" = "list"
+    "find" = "search"
     "check" = "doctor"
     "add" = "install"
     "up" = "update"
@@ -121,6 +125,114 @@ function Get-SelectedPackages {
         $packageProfiles = @($_.profiles)
         @($packageProfiles | Where-Object { $selectedProfiles -contains $_ }).Count -gt 0
     })
+}
+
+function Get-PackagesToInstall {
+    param($Definition)
+    if ([string]::IsNullOrWhiteSpace($Target)) {
+        return @(Get-SelectedPackages $Definition)
+    }
+
+    $packages = @($Definition.packages | Where-Object { $_.key -eq $Target })
+    if ($packages.Count -ne 1) {
+        throw "Package '$Target' is not in the managed profile. Run 'win search $Target' to inspect available packages."
+    }
+    return $packages
+}
+
+function Test-PackageMatch {
+    param(
+        $Package,
+        [string]$Query
+    )
+    $searchable = @(
+        [string]$Package.key,
+        [string]$Package.displayName,
+        [string]$Package.id,
+        (@($Package.commands) -join " "),
+        (@($Package.profiles) -join " ")
+    ) -join " "
+    return $searchable.IndexOf($Query, [StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
+function Search-PackageCatalogs {
+    param($Definition)
+    if ([string]::IsNullOrWhiteSpace($Target)) {
+        throw "search requires a query. Example: win search ripgrep"
+    }
+
+    Write-Step "Managed profile"
+    $managedMatches = @($Definition.packages | Where-Object {
+        (Test-PackageMatch $_ $Target) -and
+        ($Manager -in @("all", "managed") -or $_.owner -eq $Manager)
+    })
+    if ($managedMatches.Count -gt 0) {
+        $managedMatches |
+            Select-Object key, displayName, owner, id, @{Name = "install"; Expression = { "win add $($_.key)" }} |
+            Sort-Object owner, key |
+            Format-Table -AutoSize
+    } else {
+        Write-Host "No matching package is currently managed by Winenv." -ForegroundColor DarkGray
+    }
+
+    if ($Manager -eq "managed") { return }
+
+    if ($Manager -in @("all", "winget")) {
+        Write-Step "WinGet catalog"
+        if (Test-Command "winget") {
+            Invoke-Native "winget" @(
+                "search", "--query", $Target, "--count", "20",
+                "--accept-source-agreements", "--disable-interactivity"
+            ) -IgnoreExitCode
+        } else {
+            Write-Host "WinGet is unavailable; this catalog was skipped." -ForegroundColor Yellow
+        }
+    }
+
+    if ($Manager -in @("all", "scoop")) {
+        Write-Step "Scoop catalog"
+        if (Test-Command "scoop") {
+            Invoke-Native "scoop" @("search", $Target) -IgnoreExitCode
+        } else {
+            Write-Host "Scoop is not installed; this catalog was skipped." -ForegroundColor DarkGray
+        }
+    }
+
+    if ($Manager -in @("all", "mise")) {
+        Write-Step "mise registry"
+        if (-not (Test-Command "mise")) {
+            Write-Host "mise is not installed; this registry was skipped." -ForegroundColor DarkGray
+        } elseif ($DryRun) {
+            Write-Plan "mise registry --json | filter '$Target'"
+        } else {
+            $registryText = (& mise registry --json | Out-String)
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "mise registry search failed." -ForegroundColor Yellow
+            } else {
+                $registry = @($registryText | ConvertFrom-Json)
+                $miseMatches = @($registry | Where-Object {
+                    $searchable = @(
+                        [string]$_.short,
+                        [string]$_.description,
+                        (@($_.aliases) -join " "),
+                        (@($_.backends) -join " ")
+                    ) -join " "
+                    $searchable.IndexOf($Target, [StringComparison]::OrdinalIgnoreCase) -ge 0
+                } | Select-Object -First 20)
+
+                if ($miseMatches.Count -gt 0) {
+                    $miseMatches |
+                        Select-Object @{Name = "tool"; Expression = { $_.short }},
+                            @{Name = "backend"; Expression = { @($_.backends)[0] }}, description |
+                        Format-Table -AutoSize
+                } else {
+                    Write-Host "No matching tool was found in the mise registry." -ForegroundColor DarkGray
+                }
+            }
+        }
+    }
+
+    Write-Host "`nUse -Manager managed|winget|scoop|mise to narrow the next search." -ForegroundColor DarkGray
 }
 
 function Assert-ProfileDefinition {
@@ -298,7 +410,7 @@ function Install-MisePackage {
 
 function Install-SelectedPackages {
     param($Definition)
-    $packages = Get-SelectedPackages $Definition
+    $packages = Get-PackagesToInstall $Definition
     $owners = @($packages | ForEach-Object { $_.owner } | Sort-Object -Unique)
 
     Ensure-WinGet
@@ -468,13 +580,13 @@ function Update-All {
 
 function Remove-ManagedPackage {
     param($Definition)
-    if ([string]::IsNullOrWhiteSpace($PackageKey)) {
-        throw "remove requires -PackageKey <key>. Use 'list' to see keys."
+    if ([string]::IsNullOrWhiteSpace($Target)) {
+        throw "remove requires a package key. Use 'list' to see keys."
     }
 
-    $package = @($Definition.packages | Where-Object { $_.key -eq $PackageKey })
+    $package = @($Definition.packages | Where-Object { $_.key -eq $Target })
     if ($package.Count -ne 1) {
-        throw "Unknown or ambiguous package key: $PackageKey"
+        throw "Unknown or ambiguous package key: $Target"
     }
     $package = $package[0]
 
@@ -514,6 +626,7 @@ Assert-ProfileDefinition $definition
 
 switch ($Action) {
     "list" { Show-Profile $definition }
+    "search" { Search-PackageCatalogs $definition }
     "doctor" { Test-ProfileHealth $definition }
     "install" {
         Install-SelectedPackages $definition

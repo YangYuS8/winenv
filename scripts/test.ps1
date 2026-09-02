@@ -48,12 +48,27 @@ function global:scoop {}
 function global:mise {}
 
 & (Join-Path $root "win.ps1") list
+$managedSearch = (& (Join-Path $root "win.ps1") search ripgrep -Manager managed | Out-String)
+if ($managedSearch -notmatch "ripgrep" -or $managedSearch -notmatch "win add ripgrep") {
+    throw "Managed package search did not return an installable result."
+}
+& (Join-Path $root "win.ps1") search ripgrep -DryRun
 & (Join-Path $root "win.ps1") doctor
 $reportedVersion = & (Join-Path $root "win.ps1") version
 if ([string]::IsNullOrWhiteSpace([string]$reportedVersion)) {
     throw "The version command returned no version."
 }
 & (Join-Path $root "win.ps1") install -DryRun
+& (Join-Path $root "win.ps1") install vscode -DryRun
+$unknownInstallWasRejected = $false
+try {
+    & (Join-Path $root "win.ps1") install package-that-is-not-managed -DryRun
+} catch {
+    $unknownInstallWasRejected = $true
+}
+if (-not $unknownInstallWasRejected) {
+    throw "An unknown package key unexpectedly reached the installer."
+}
 & (Join-Path $root "win.ps1") update -DryRun
 & (Join-Path $root "win.ps1") remove vscode -DryRun
 & (Join-Path $root "win.ps1") cleanup -DryRun
