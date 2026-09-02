@@ -151,6 +151,7 @@ chore: 更新维护配置                         # 不发布
 4. 更新 `VERSION` 和 `CHANGELOG.md`；
 5. 创建版本提交和 `v<version>` tag；
 6. 创建 GitHub Release，并上传 ZIP 与 `SHA256SUMS`。
+7. 在新的 Windows runner 上下载刚发布的版本并执行安装冒烟测试。
 
 因此正常开发只需要写准确的 `feat:`、`fix:` 等提交信息。
 
