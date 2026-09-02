@@ -1,3 +1,10 @@
+## [0.2.1](https://github.com/YangYuS8/winenv/compare/v0.2.0...v0.2.1) (2026-09-02)
+
+
+### Bug Fixes
+
+* detect published tags without breaking the pipeline ([e4b3192](https://github.com/YangYuS8/winenv/commit/e4b3192a97c8d743454b5dfd50293e906699dbd0))
+
 # [0.2.0](https://github.com/YangYuS8/winenv/compare/v0.1.0...v0.2.0) (2026-09-02)
 
 
