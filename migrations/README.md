@@ -7,7 +7,7 @@
 002-next-change.ps1
 ```
 
-`winprofile.ps1 install` 和 `winprofile.ps1 update` 会按文件名顺序执行尚未记录的脚本。脚本成功结束后，文件名会写入 `%LOCALAPPDATA%\WinProfile\state.json`；已经成功的 migration 不会重复执行。
+`win.ps1 install` 和 `win.ps1 update` 会按文件名顺序执行尚未记录的脚本。脚本成功结束后，文件名会写入 `%LOCALAPPDATA%\Winenv\state.json`；已经成功的 migration 不会重复执行。
 
 Migration 应当：
 

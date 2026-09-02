@@ -1,7 +1,7 @@
 {
   "$schema": "./profile.schema.json",
   "schemaVersion": 1,
-  "name": "yangyus8-windows",
+  "name": "yangyus8-winenv",
   "defaultProfiles": [
     "base",
     "desktop",

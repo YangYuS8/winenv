@@ -14,7 +14,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ProfilePath = Join-Path $PSScriptRoot "profile.json"
 $MigrationPath = Join-Path $PSScriptRoot "migrations"
-$StateRoot = Join-Path $env:LOCALAPPDATA "WinProfile"
+$StateRoot = Join-Path $env:LOCALAPPDATA "Winenv"
 $StatePath = Join-Path $StateRoot "state.json"
 $AllowedOwners = @("winget", "scoop", "mise", "vendor")
 $ActionAliases = @{
@@ -202,14 +202,14 @@ function Ensure-Scoop {
     }
 }
 
-function Enable-WinProfileInPowerShell {
+function Enable-WinenvInPowerShell {
     $documents = [Environment]::GetFolderPath("MyDocuments")
     $profilePaths = @(
         (Join-Path $documents "WindowsPowerShell\profile.ps1"),
         (Join-Path $documents "PowerShell\profile.ps1")
     )
-    $startMarker = "# >>> winprofile shell >>>"
-    $endMarker = "# <<< winprofile shell <<<"
+    $startMarker = "# >>> winenv shell >>>"
+    $endMarker = "# <<< winenv shell <<<"
     $escapedScriptPath = $PSCommandPath.Replace("'", "''")
     $block = @"
 $startMarker
@@ -292,7 +292,7 @@ function Install-SelectedPackages {
         }
     }
 
-    Enable-WinProfileInPowerShell
+    Enable-WinenvInPowerShell
 }
 
 function Read-State {
@@ -483,7 +483,7 @@ switch ($Action) {
     "install" {
         Install-SelectedPackages $definition
         Invoke-Migrations
-        Write-Host "`nInstall completed. Run './winprofile.ps1 doctor' in a new PowerShell window." -ForegroundColor Green
+        Write-Host "`nInstall completed. Open a new PowerShell window and run 'win doctor'." -ForegroundColor Green
     }
     "update" { Update-All $definition }
     "remove" { Remove-ManagedPackage $definition }

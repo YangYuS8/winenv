@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Windows Profile",
+  "title": "Winenv Profile",
   "type": "object",
   "required": ["schemaVersion", "name", "defaultProfiles", "scoopBuckets", "packages"],
   "additionalProperties": false,

@@ -1,4 +1,4 @@
-# Windows Profile
+# Winenv
 
 这是一个先服务于个人使用的 Windows 11 软件管理层。它不修改 Windows 镜像，也不试图替代 WinGet、Scoop 或 mise；它只负责规定每类软件归谁管理，并提供一个稳定入口。
 
@@ -15,17 +15,17 @@
 在一台新的 Windows 11 上，先克隆仓库：
 
 ```powershell
-git clone https://github.com/YangYuS8/windows-profile.git
-cd windows-profile
+git clone https://github.com/YangYuS8/winenv.git
+cd winenv
 ```
 
 然后在普通 PowerShell 窗口中执行：
 
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-./winprofile.ps1 list
-./winprofile.ps1 doctor
-./winprofile.ps1 install
+./win.ps1 list
+./win.ps1 doctor
+./win.ps1 install
 ```
 
 这是唯一一次需要输入完整脚本名。安装完成并重新打开 PowerShell 后，会得到全局的短命令 `win`。
@@ -42,7 +42,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 如需无人值守确认 Scoop 官方安装脚本，可加 `-Yes`：
 
 ```powershell
-./winprofile.ps1 install -Yes
+./win.ps1 install -Yes
 ```
 
 ## 日常使用
@@ -90,7 +90,7 @@ win clean
 可在命令行临时选择 profiles：
 
 ```powershell
-./winprofile.ps1 install -Profiles base,desktop,development
+./win.ps1 install -Profiles base,desktop,development
 ```
 
 也可以直接修改 `profile.json` 中的 `defaultProfiles`。
@@ -109,8 +109,8 @@ win clean
 ## 目录
 
 ```text
-windows-profile/
-├── winprofile.ps1       # 唯一的用户入口
+winenv/
+├── win.ps1              # 首次安装入口
 ├── profile.json         # 软件及其唯一所有者
 ├── profile.schema.json  # 清单结构
 └── migrations/          # 只执行一次的演进脚本
@@ -119,7 +119,7 @@ windows-profile/
 运行状态保存在：
 
 ```text
-%LOCALAPPDATA%\WinProfile\state.json
+%LOCALAPPDATA%\Winenv\state.json
 ```
 
 这个文件只记录已执行的 migration，不存储密码或登录状态。
