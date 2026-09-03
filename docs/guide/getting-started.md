@@ -1,44 +1,63 @@
-# 开始使用
+# Getting started
 
-Winenv 支持 Windows 11。首次安装只需要普通 PowerShell、网络连接，以及 Windows 11 通常随 App Installer 提供的 WinGet。
+Winenv supports Windows 11. A fresh installation needs only regular PowerShell, a network connection, and WinGet, which Windows 11 normally provides through App Installer.
 
-## 一行安装
+## Install in one line
 
-打开普通 PowerShell，执行：
+Open a regular PowerShell window and run:
 
 ```powershell
 irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1 | iex
 ```
 
-安装器会自动完成以下工作：
+The installer will:
 
-1. 从 GitHub Releases 获取最新稳定版；
-2. 下载版本 ZIP 和 `SHA256SUMS` 并校验 SHA-256；
-3. 安装到 `%LOCALAPPDATA%\Winenv\versions`；
-4. 创建全局短命令 `win`；
-5. 探测 PowerShell 7、fzf 和 mise 的真实路径及版本，兼容时直接复用；
-6. 只为缺失的运行能力安装内置 Profile 声明的默认包。
+1. resolve the latest stable GitHub Release;
+2. download the versioned ZIP and `SHA256SUMS`, then verify SHA-256;
+3. install that version under `%LOCALAPPDATA%\Winenv\versions`;
+4. create the global `win` command;
+5. probe the real paths and versions of PowerShell 7, fzf, and mise, reusing compatible installations;
+6. install only the runtime capabilities that are still missing.
 
-安装结束后新开一个 PowerShell 窗口：
+Open a new PowerShell window when it finishes:
 
 ```powershell
 win check
 win
 ```
 
-::: tip 已经安装过前置软件
-只要现有的 PowerShell 7 和 fzf 达到最低版本并且可以正常运行，Winenv 就复用它们。原本通过 MSI、ZIP、Scoop 或其他方式安装的软件仍归原来的方式更新和卸载。
+::: tip Existing prerequisites are reused
+If PowerShell 7 and fzf are already runnable and meet the minimum versions, Winenv uses them in place. Software originally installed with an MSI, ZIP, Scoop, or another method remains owned and updated by that method.
 :::
 
-## WinGet 不可用时
+## Language selection
 
-WinGet 是 Windows 侧的基础安装通道。找不到 `winget.exe` 时，安装器会先尝试重新注册 Windows 11 自带的 App Installer；仍不可用则停止，并给出 Microsoft Store 和官方修复方向。
+English is the canonical interface language. On first run, Winenv follows the current Windows UI culture and selects Simplified Chinese for a `zh-*` culture; all other cultures use English.
 
-Winenv 不会静默提权，也不会为了补 WinGet 擅自安装 PowerShell Gallery 模块。
+```powershell
+win lang             # show the effective language and its source
+win lang en          # persist English
+win lang zh          # persist Simplified Chinese
+win lang auto        # return to system detection
+```
 
-## 安装时导入自己的 Profile
+Use `-Lang en`, `-Lang zh`, or `-Lang auto` for one invocation. The `WINENV_LANG` environment variable can set a session or automation default; an explicit `-Lang` takes precedence.
 
-可以从本地文件或 HTTPS 链接导入：
+To select a language during installation:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1))) -Lang zh
+```
+
+## When WinGet is unavailable
+
+WinGet is the foundational installation route on Windows. If `winget.exe` cannot be found, the installer first tries to re-register the App Installer already present on Windows 11. If that fails, it stops with directions for Microsoft Store or official repair paths.
+
+Winenv does not silently elevate privileges or install PowerShell Gallery modules to obtain WinGet.
+
+## Import a profile during installation
+
+Import a local file or an HTTPS URL:
 
 ```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1))) -UserProfile C:\Users\me\my-winenv.json
@@ -46,28 +65,28 @@ Winenv 不会静默提权，也不会为了补 WinGet 擅自安装 PowerShell Ga
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1))) -UserProfile https://example.com/my-winenv.json
 ```
 
-Profile 会作为独立的一层加入，不会覆盖内置运行层或其他用户 Profile。详见[组合 Profile](./profiles)。
+The profile becomes an independent layer. It does not overwrite the runtime layer or another user profile. See [Composing profiles](./profiles).
 
-## 只安装 Winenv
+## Install Winenv without applying profiles
 
-想先获得 `win` 命令、不立即安装 Profile 中的软件：
+To create the `win` command without immediately installing profile software:
 
 ```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1))) -ToolOnly
 ```
 
-之后可随时执行 `win add` 应用当前 Profile。
+Run `win add` later to apply the active profiles.
 
-## 安装指定版本
+## Install a specific version
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1))) -Version 0.12.0
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1))) -Version 0.13.0
 ```
 
-不指定 `-Version` 时始终安装最新稳定 Release；日常执行 `win up` 会先更新 Winenv 自身。
+Without `-Version`, the installer always uses the latest stable release. The regular `win up` command updates Winenv before updating managed software.
 
-## 下一步
+## Where to go next
 
-- 新电脑：直接[查找与管理软件](./packages)。
-- 已经使用一段时间的电脑：先[扫描并接入现有系统](./existing-windows)。
-- 有自己的软件基线：创建或导入[用户 Profile](./profiles)。
+- New PC: [find and manage software](./packages).
+- Existing PC: [scan and adopt the current installation](./existing-windows).
+- Personal software baseline: create or import a [user profile](./profiles).

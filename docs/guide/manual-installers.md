@@ -1,20 +1,20 @@
-# 目录外的软件
+# Software outside the default catalogs
 
-软件不在三个默认目录中时，优先寻找发布者维护的包来源；只有没有可复现元数据时，才把裸 EXE/MSI 当作一次安全交接。
+When software is missing from all three default catalogs, prefer a publisher-maintained package source. Treat a raw EXE or MSI as an explicit, inspected handoff only when reproducible metadata is unavailable.
 
-## Scoop 扩展 bucket
+## Additional Scoop buckets
 
-默认 bucket 没有某个软件时，可以添加 Scoop 已知 bucket 或可信的第三方 Git 仓库：
+Add a known Scoop bucket or a trusted third-party Git repository:
 
 ```powershell
-win bucket                         # 查看已启用 bucket
-win bucket extras                  # Scoop 已知 bucket
+win bucket
+win bucket extras
 win bucket mybucket https://github.com/user/scoop-bucket.git
 ```
 
-第三方 bucket 中的 manifest 可以包含安装脚本，因此它属于新的信任边界。Winenv 会显示完整来源；首次添加、同名 bucket 更换 URL 都必须人工确认，`-y` 不会替你做这个决定。
+A third-party bucket can execute installation scripts and therefore creates a new trust boundary. Winenv displays the full source. Adding it for the first time, or changing the URL behind an existing name, always requires human confirmation; `-y` does not make that decision.
 
-需要跨机器复现时，可在 Profile 中声明：
+For cross-machine reproduction, declare it in a profile:
 
 ```json
 {
@@ -28,31 +28,31 @@ win bucket mybucket https://github.com/user/scoop-bucket.git
 }
 ```
 
-同名但 URL 不同的声明会作为冲突停止处理。
+Declarations that reuse a name with different URLs stop as a conflict.
 
-## 独立 Scoop manifest
+## Standalone Scoop manifest
 
-发布者只提供一个 JSON manifest 时：
+If a publisher provides only a JSON manifest:
 
 ```powershell
 win add C:\Users\me\Downloads\my-app.json
 win add https://example.com/my-app.json
 ```
 
-Winenv 只接受本地或 HTTPS `.json`，大小限制为 1 MiB。安装前会显示来源、版本以及实际快照的 SHA-256，确认后仍由 Scoop 完成安装登记。
+Winenv accepts only a local or HTTPS `.json` up to 1 MiB. Before installation it shows the origin, version, and SHA-256 of the exact snapshot. Scoop still performs and records the installation.
 
-独立 manifest 没有稳定更新源。长期使用并希望 `scoop update` 自动发现版本时，应将它放进自己或可信维护者的 bucket。
+A standalone manifest has no stable update feed. Put it in a trusted bucket if long-term `scoop update` support matters.
 
-## 原始 EXE 与 MSI
+## Raw EXE and MSI
 
 ```powershell
 win add C:\Users\me\Downloads\setup.exe
 win add C:\Users\me\Downloads\setup.msi
 ```
 
-运行前会展示文件大小、产品版本、SHA-256、Authenticode 状态和发布者。EXE 使用发布者原本的界面；MSI 通过 Windows 自带的 `msiexec.exe` 运行，默认添加 `/norestart`，详细日志写入 `%LOCALAPPDATA%\Winenv\logs`。
+Before launch, Winenv shows file size, product version, SHA-256, Authenticode state, and publisher. An EXE uses its own interface; an MSI runs through Windows `msiexec.exe` with `/norestart` by default and writes a verbose log under `%LOCALAPPDATA%\Winenv\logs`.
 
-Winenv 不猜测并不存在统一标准的 `/S`、`/silent` 参数。已经从可信来源取得参数或哈希时，可以明确传入：
+Winenv does not guess non-standard `/S` or `/silent` switches. Pass arguments or a known hash explicitly:
 
 ```powershell
 win add .\setup.exe -Args '/S','/norestart'
@@ -60,35 +60,35 @@ win add .\setup.msi -Args '/passive','INSTALLDIR=C:\Tools\Example'
 win add .\setup.exe -Hash 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-`-y` 只会自动接受有效 Authenticode 签名的安装器，或通过 `-Hash` 精确校验的未签名文件。哈希不匹配始终停止；签名损坏、不受信任或无法验证时仍要求人工查看。
+`-y` automatically accepts only a valid Authenticode signature or an unsigned file that exactly matches `-Hash`. A hash mismatch always stops. Broken, untrusted, or unverifiable signatures still require review.
 
-Winenv 暂不直接下载 EXE/MSI。裸安装器也不会被伪装成新的包管理器：后续能否升级、卸载或静默运行仍取决于发布者。
+Winenv currently does not download raw EXE/MSI files. Raw installers are not disguised as a package manager: future update, removal, and unattended behavior remain the publisher's responsibility.
 
-## 本地 WinGet manifest
+## Local WinGet manifest
 
-需要稳定复现时，优先制作包含下载地址、SHA-256、参数和版本信息的 WinGet manifest：
+For stable reproduction, prefer a WinGet manifest containing download URL, SHA-256, arguments, and version:
 
 ```powershell
 win add C:\Users\me\manifests\Example.App.yaml
 win add C:\Users\me\manifests\Example.App
 ```
 
-Winenv 会列出 YAML 文件及 SHA-256，确认后执行 `winget validate` 和 `winget install --manifest`。多文件 manifest 直接传入目录。
+Winenv lists the YAML files and hashes, then runs `winget validate` and `winget install --manifest` after confirmation. Pass the directory for a multi-file manifest.
 
-本地 manifest 是管理员控制的 WinGet 能力。第一次使用前，需要在管理员 PowerShell 中明确启用：
+Local manifests are an administrator-controlled WinGet feature. Enable them explicitly in an elevated PowerShell before first use:
 
 ```powershell
 winget settings --enable LocalManifestFiles
 ```
 
-Winenv 会检测该设置，但不会自行提权或静默修改它。
+Winenv detects the setting but does not elevate itself or change it silently.
 
-## 安装后的管理
+## After installation
 
-只要安装器把应用登记到 Windows“已安装的应用”，之后通常可以使用：
+If the installer registers an application with Windows Installed apps, it can usually be found later with:
 
 ```powershell
-win rm 应用名
+win rm application-name
 ```
 
-只有当已安装应用能够匹配 WinGet 公共目录时，`win up` 才能替它升级；否则继续使用软件自带更新器或新版安装器。
+`win up` can update it only when the installed entry maps to the public WinGet catalog. Otherwise, continue using the vendor updater or a newer installer.

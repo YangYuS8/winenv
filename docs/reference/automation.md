@@ -1,56 +1,56 @@
-# 文档与发布自动化
+# Documentation and release automation
 
-Winenv 的版本、更新日志、Release 资产与文档站都从提交记录产生。日常维护不需要手工改版本号、复制更新日志或上传网页。
+Winenv derives versions, release notes, assets, and the documentation site from commit history. Routine maintenance does not require editing version numbers, copying changelogs, or uploading site files.
 
-## 发布链路
+## Release pipeline
 
-推送或合并到 `main` 后：
+After a push or merge to `main`:
 
-1. `Release` workflow 验证 Profile、PowerShell 语法与行为测试；
-2. semantic-release 分析 Conventional Commits；
-3. 有功能或修复时，自动更新 `VERSION` 与根目录 `CHANGELOG.md`；
-4. 自动创建版本提交、Git tag、GitHub Release、ZIP 与 SHA-256；
-5. 新版本通过从 GitHub Release 下载并安装的冒烟测试；
-6. `Release` 成功结束后，`Pages` workflow 从最新 `main` 构建并部署文档。
+1. the Release workflow validates profiles, PowerShell syntax, behavior, localization, and documentation;
+2. semantic-release analyzes Conventional Commits;
+3. a feature or fix updates `VERSION` and the root `CHANGELOG.md` automatically;
+4. the workflow creates the version commit, Git tag, GitHub Release, ZIP, and SHA-256 asset;
+5. a smoke test downloads and installs the newly published release;
+6. after Release succeeds, the Pages workflow builds and deploys the latest `main` documentation.
 
-Pages 之所以等待 Release，是为了让刚生成的版本和更新日志出现在同一次站点部署中。`docs:` 等不产生版本的提交也会经过 Release 验证并更新文档站。
+Pages waits for Release so that the generated version and release notes appear in the same site deployment. Non-release commits such as `docs:` still pass release validation and update the documentation site.
 
-## 提交类型
+## Commit types
 
 ```text
-fix: 修复安装器路径                 # patch
-feat: 添加新能力                    # minor
-feat!: 修改不兼容的配置结构         # major
-docs: 补充说明                      # 不发布版本，但更新文档站
-chore: 更新维护配置                 # 不发布版本
+fix: repair installer path             # patch release
+feat: add a capability                 # minor release
+feat!: change an incompatible schema   # major release
+docs: clarify profile behavior         # no release; deploy docs
+chore: update maintenance config       # no release
 ```
 
-准确描述变化即可，不要手工编辑 `VERSION`。
+Describe the change accurately and do not edit `VERSION` by hand. See the [contribution guide](/community/contributing) for the complete workflow.
 
-## 更新日志如何同步
+## Changelog synchronization
 
-根目录 `CHANGELOG.md` 是唯一来源。`npm run docs:build` 会先运行 `scripts/sync-docs-changelog.mjs`，将标题层级调整为适合站点的文档页，再交给 VitePress 构建。
+The root `CHANGELOG.md` is the single source. `npm run docs:build` first runs `scripts/sync-docs-changelog.mjs`, which creates both English and Chinese documentation wrappers around the same release history before VitePress builds the site.
 
-生成的 `docs/changelog.md` 被 Git 忽略，避免仓库里出现一份需要手工同步的副本。
+Generated `docs/changelog.md` and `docs/zh/changelog.md` files are ignored by Git to avoid checked-in copies that require manual synchronization.
 
-## 本地预览
+## Local preview
 
-需要 Node.js 20 或更高版本：
+Node.js 20 or newer is required:
 
 ```powershell
 npm ci
 npm run docs:dev
 ```
 
-提交前执行生产构建：
+Before submitting documentation changes:
 
 ```powershell
 npm run docs:build
 npm run docs:preview
 ```
 
-内容位于 `docs/`，站点配置位于 `docs/.vitepress/`。
+Content lives under `docs/`; site configuration and language routing live under `docs/.vitepress/`.
 
-## 手动重发文档
+## Manually redeploy the site
 
-正常情况下不需要任何操作。如果 GitHub Pages 服务发生临时故障，可以在 Actions 页面手动运行 `Pages` workflow；它仍会从最新 `main` 构建，不依赖本地生成文件。
+Normally no action is required. If GitHub Pages has a transient failure, manually run the Pages workflow from the Actions tab. It still builds from the latest `main` and does not depend on locally generated files.

@@ -1,0 +1,34 @@
+name: Usage question / 使用问题
+description: Ask for help after checking the documentation and diagnostics. / 查阅文档并运行诊断后寻求帮助。
+title: "[Question]: "
+labels: [question]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do? / 你想完成什么？
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried? / 已经尝试了什么？
+      description: Include commands, relevant documentation, and sanitized output.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment / 环境
+      description: Include `win ver`, Windows build, and PowerShell version.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist / 检查表
+      options:
+        - label: I read the relevant guide and ran `win check`. / 我已阅读相关指南并运行 `win check`。
+          required: true
+        - label: I removed credentials and private data. / 我已移除凭据和隐私数据。
+          required: true

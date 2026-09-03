@@ -24,6 +24,7 @@ $releaseFiles = @(
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "README.zh-CN.md",
     "VERSION",
     "install.ps1",
     "profile.json",
@@ -40,6 +41,7 @@ foreach ($file in $releaseFiles) {
 }
 
 Copy-Item -Path (Join-Path $root "migrations") -Destination $stage -Recurse
+Copy-Item -Path (Join-Path $root "locales") -Destination $stage -Recurse
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $archivePath -CompressionLevel Optimal
 
 $hash = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()

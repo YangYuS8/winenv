@@ -1,0 +1,49 @@
+name: Feature request / 功能建议
+description: Propose a focused improvement grounded in a user problem. / 从具体用户问题出发提出改进。
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Winenv is maintained by a small community. A clear problem, narrow scope, and low-maintenance design make a proposal much easier to adopt.
+
+        Winenv 由小规模社区维护。问题清楚、范围聚焦、维护成本可控的建议更容易落地。
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem / 用户问题
+      description: Describe the workflow that is difficult today, without starting from a preferred implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome / 期望结果
+      description: What should users be able to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 考虑过的方案
+      description: Include current workarounds and why they are insufficient.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Manager and trust boundaries / 管理器与信任边界
+      description: Explain effects on WinGet, Scoop, mise, profiles, permissions, security, or backward compatibility.
+  - type: textarea
+    id: maintenance
+    attributes:
+      label: Maintenance cost / 维护成本
+      description: What data, tests, translations, or ongoing curation would this require?
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist / 检查表
+      options:
+        - label: I searched existing issues and read the project scope in CONTRIBUTING.md. / 我已搜索已有 Issue 并阅读贡献指南中的项目范围。
+          required: true

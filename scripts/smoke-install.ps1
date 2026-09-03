@@ -32,11 +32,12 @@ $smokeProfilePath = Join-Path $testRoot "smoke-user-profile.json"
 
 $env:LOCALAPPDATA = $testRoot
 $env:MISE_CONFIG_DIR = Join-Path $testRoot "mise"
-& (Join-Path $root "install.ps1") -Version $expectedVersion -UserProfile $smokeProfilePath -ToolOnly -Force
+& (Join-Path $root "install.ps1") -Version $expectedVersion -UserProfile $smokeProfilePath -Language zh -ToolOnly -Force
 
 $installedEntry = Join-Path $testRoot "Winenv\versions\$expectedVersion\win.ps1"
 $launcherEntry = Join-Path $testRoot "Winenv\bin\win-launch.ps1"
-if (-not (Test-Path $installedEntry) -or -not (Test-Path $launcherEntry)) {
+$localeEntry = Join-Path $testRoot "Winenv\versions\$expectedVersion\locales\zh-CN.json"
+if (-not (Test-Path $installedEntry) -or -not (Test-Path $launcherEntry) -or -not (Test-Path $localeEntry)) {
     throw "The release installer did not create the expected files."
 }
 
@@ -47,7 +48,7 @@ if ($installedVersion -ne $expectedVersion -or $launcherVersion -ne $expectedVer
 }
 
 $activeProfile = (& $installedEntry list 6>&1 | Out-String -Width 4096)
-if ($activeProfile -notmatch "smoke-user" -or $activeProfile -notmatch "Windows Terminal" -or $activeProfile -notmatch "junegunn.fzf") {
+if ($activeProfile -notmatch "smoke-user" -or $activeProfile -notmatch "Windows Terminal" -or $activeProfile -notmatch "junegunn.fzf" -or $activeProfile -notmatch "用户 Profile") {
     throw "The installer did not activate the requested user profile over the runtime profile."
 }
 

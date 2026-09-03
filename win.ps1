@@ -18,6 +18,9 @@ param(
     [Alias("From")]
     [ValidateSet("all", "managed", "winget", "scoop", "mise")]
     [string]$Manager = "all",
+    [Alias("Lang")]
+    [ValidateSet("auto", "en", "zh", "en-US", "zh-CN")]
+    [string]$Language,
     [Alias("n")]
     [switch]$DryRun,
     [Alias("y")]
@@ -68,12 +71,175 @@ $ActionAliases = @{
     "self" = "self-update"
     "selfup" = "self-update"
     "apps" = "scan"
+    "lang" = "language"
 }
 $CanonicalActions = @(
     "help", "list", "use", "unuse", "profile", "store", "search", "info", "doctor",
     "install", "update", "remove", "cleanup", "migrate", "version", "self-update", "bucket",
-    "scan", "adopt"
+    "scan", "adopt", "language"
 )
+
+function ConvertTo-WinenvLanguage {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+    switch -Regex ($Value.Trim()) {
+        "^(?i:auto)$" { return "auto" }
+        "^(?i:zh|zh-cn|zh-hans)" { return "zh-CN" }
+        "^(?i:en|en-us)" { return "en-US" }
+        default { return "" }
+    }
+}
+
+function Get-WinenvStoredLanguage {
+    if (-not (Test-Path -LiteralPath $ConfigPath)) { return "" }
+    try {
+        $storedConfig = Get-Content -Raw -Encoding UTF8 -LiteralPath $ConfigPath | ConvertFrom-Json -ErrorAction Stop
+        return (ConvertTo-WinenvLanguage ([string]$storedConfig.language))
+    } catch {
+        return ""
+    }
+}
+
+function Resolve-WinenvLanguage {
+    param([string]$RequestedLanguage)
+
+    $requested = ConvertTo-WinenvLanguage $RequestedLanguage
+    if ($requested -and $requested -ne "auto") {
+        return [pscustomobject]@{ Language = $requested; Source = "parameter" }
+    }
+
+    $environmentLanguage = ConvertTo-WinenvLanguage $env:WINENV_LANG
+    if ($requested -ne "auto" -and $environmentLanguage -and $environmentLanguage -ne "auto") {
+        return [pscustomobject]@{ Language = $environmentLanguage; Source = "environment" }
+    }
+
+    $storedLanguage = Get-WinenvStoredLanguage
+    if ($requested -ne "auto" -and $storedLanguage -and $storedLanguage -ne "auto") {
+        return [pscustomobject]@{ Language = $storedLanguage; Source = "config" }
+    }
+
+    $uiCulture = [Globalization.CultureInfo]::CurrentUICulture.Name
+    $detected = if ($uiCulture -match "^(?i:zh)(-|$)") { "zh-CN" } else { "en-US" }
+    return [pscustomobject]@{ Language = $detected; Source = "system" }
+}
+
+function Initialize-WinenvLocalization {
+    param([string]$RequestedLanguage)
+
+    $resolved = Resolve-WinenvLanguage $RequestedLanguage
+    $Script:WinenvLanguage = [string]$resolved.Language
+    $Script:WinenvLanguageSource = [string]$resolved.Source
+    $Script:WinenvLocalization = $null
+    if ($Script:WinenvLanguage -eq "zh-CN") {
+        $resourcePath = Join-Path (Join-Path $PSScriptRoot "locales") "zh-CN.json"
+        if (Test-Path -LiteralPath $resourcePath) {
+            try {
+                $Script:WinenvLocalization = Get-Content -Raw -Encoding UTF8 -LiteralPath $resourcePath | ConvertFrom-Json -ErrorAction Stop
+            } catch {
+                $Script:WinenvLanguage = "en-US"
+                $Script:WinenvLanguageSource = "fallback"
+            }
+        } else {
+            $Script:WinenvLanguage = "en-US"
+            $Script:WinenvLanguageSource = "fallback"
+        }
+    }
+}
+
+function ConvertTo-WinenvLocalizedText {
+    param([AllowEmptyString()][string]$Text)
+    if ($Script:WinenvLanguage -ne "zh-CN" -or $null -eq $Script:WinenvLocalization) { return $Text }
+
+    $exactProperty = $Script:WinenvLocalization.exact.psobject.Properties[$Text]
+    if ($null -ne $exactProperty) { return [string]$exactProperty.Value }
+
+    $localized = $Text
+    foreach ($rule in @($Script:WinenvLocalization.patterns)) {
+        $localized = [regex]::Replace($localized, [string]$rule.pattern, [string]$rule.replacement)
+    }
+    foreach ($rule in @($Script:WinenvLocalization.replacements)) {
+        $localized = $localized.Replace([string]$rule.source, [string]$rule.target)
+    }
+    return $localized
+}
+
+function Write-WinenvHost {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position = 0, ValueFromPipeline = $true, ValueFromRemainingArguments = $true)]
+        [AllowNull()][object[]]$Object,
+        [object]$Separator = " ",
+        [ConsoleColor]$ForegroundColor,
+        [ConsoleColor]$BackgroundColor,
+        [switch]$NoNewline
+    )
+    process {
+        $text = ConvertTo-WinenvLocalizedText ((@($Object) | ForEach-Object { [string]$_ }) -join [string]$Separator)
+        $parameters = @{}
+        if ($PSBoundParameters.ContainsKey("ForegroundColor")) { $parameters.ForegroundColor = $ForegroundColor }
+        if ($PSBoundParameters.ContainsKey("BackgroundColor")) { $parameters.BackgroundColor = $BackgroundColor }
+        if ($NoNewline) { $parameters.NoNewline = $true }
+        Microsoft.PowerShell.Utility\Write-Host $text @parameters
+    }
+}
+
+function Read-WinenvHost {
+    param([string]$Prompt)
+    return & "Read-Host" (ConvertTo-WinenvLocalizedText $Prompt)
+}
+
+function Get-WinenvLocalizedColumnName {
+    param([string]$Name)
+    if ($Script:WinenvLanguage -ne "zh-CN") { return $Name }
+    $property = $Script:WinenvLocalization.columnNames.psobject.Properties[$Name]
+    if ($null -ne $property) { return [string]$property.Value }
+    return $Name
+}
+
+function Get-WinenvLocalizedDisplayValue {
+    param([string]$PropertyName, $Value)
+    if ($Script:WinenvLanguage -ne "zh-CN" -or $PropertyName -notin @("status", "action")) { return $Value }
+    $key = ([string]$Value).ToLowerInvariant()
+    $property = $Script:WinenvLocalization.displayValues.psobject.Properties[$key]
+    if ($null -ne $property) { return [string]$property.Value }
+    return $Value
+}
+
+function Format-WinenvTable {
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true)]$InputObject,
+        [Parameter(Position = 0)][object[]]$Property,
+        [switch]$AutoSize
+    )
+    begin { $items = New-Object System.Collections.Generic.List[object] }
+    process { if ($null -ne $InputObject) { $items.Add($InputObject) } }
+    end {
+        if ($items.Count -eq 0) { return }
+        $properties = if ($null -ne $Property -and $Property.Count -gt 0) {
+            @($Property)
+        } else {
+            @($items[0].psobject.Properties | Select-Object -ExpandProperty Name)
+        }
+        if ($Script:WinenvLanguage -ne "zh-CN") {
+            $items | Microsoft.PowerShell.Utility\Format-Table $properties -AutoSize:$AutoSize
+            return
+        }
+
+        $localizedItems = @(foreach ($item in $items) {
+            $row = [ordered]@{}
+            foreach ($property in $properties) {
+                $propertyName = [string]$property
+                $value = $item.psobject.Properties[$propertyName].Value
+                $row[(Get-WinenvLocalizedColumnName $propertyName)] = Get-WinenvLocalizedDisplayValue $propertyName $value
+            }
+            [pscustomobject]$row
+        })
+        $localizedItems | Microsoft.PowerShell.Utility\Format-Table -AutoSize:$AutoSize
+    }
+}
+
+Initialize-WinenvLocalization $Language
 
 if ([string]::IsNullOrWhiteSpace($Action)) {
     $Action = "store"
@@ -81,7 +247,7 @@ if ([string]::IsNullOrWhiteSpace($Action)) {
     $Action = $ActionAliases[$Action]
 } elseif ($CanonicalActions -notcontains $Action) {
     if (-not [string]::IsNullOrWhiteSpace($Target)) {
-        throw "Use quotes around a multi-word search, for example: win 'Visual Studio Code'"
+        throw (ConvertTo-WinenvLocalizedText "Use quotes around a multi-word search, for example: win 'Visual Studio Code'")
     }
     $Target = $Action
     $Action = "store"
@@ -89,15 +255,16 @@ if ([string]::IsNullOrWhiteSpace($Action)) {
 
 function Write-Step {
     param([string]$Message)
-    Write-Host "`n==> $Message" -ForegroundColor Cyan
+    Write-WinenvHost "`n==> $(ConvertTo-WinenvLocalizedText $Message)" -ForegroundColor Cyan
 }
 
 function Write-Plan {
     param([string]$Message)
+    $localizedMessage = ConvertTo-WinenvLocalizedText $Message
     if ($DryRun) {
-        Write-Host "[dry-run] $Message" -ForegroundColor DarkYellow
+        Write-WinenvHost "[dry-run] $localizedMessage" -ForegroundColor DarkYellow
     } else {
-        Write-Host $Message -ForegroundColor DarkGray
+        Write-WinenvHost $localizedMessage -ForegroundColor DarkGray
     }
 }
 
@@ -110,7 +277,11 @@ function Show-WinenvVersion {
 }
 
 function Show-WinenvHelp {
-    Write-Host @"
+    if ($Script:WinenvLanguage -eq "zh-CN") {
+        Write-WinenvHost (@($Script:WinenvLocalization.help) -join [Environment]::NewLine)
+        return
+    }
+    Write-WinenvHost @"
 Winenv keeps Windows software simple.
 
   win [software]       Search, select, and install
@@ -134,11 +305,13 @@ Winenv keeps Windows software simple.
   win show <software>  Show package ownership and details
   win check            Check managers and command conflicts
   win clean            Remove unused package versions
+  win lang [en|zh|auto]
+                       Show or persist the interface language
   win ver              Print the Winenv version
   win help             Show this help
 
 Useful shortcuts: -From winget|scoop|mise, -n (dry run), -y (confirm),
-                  -Hash <sha256>, -Args <installer-arguments>.
+                  -Lang en|zh|auto, -Hash <sha256>, -Args <installer-arguments>.
 "@
 }
 
@@ -448,7 +621,7 @@ function ConvertFrom-ProfileText {
 function Read-ProfileFile {
     param([string]$Path)
     if (-not (Test-Path $Path)) { throw "Profile not found: $Path" }
-    return (ConvertFrom-ProfileText (Get-Content -Raw -Path $Path) $Path)
+    return (ConvertFrom-ProfileText (Get-Content -Raw -Encoding UTF8 -Path $Path) $Path)
 }
 
 function Read-UserProfileSource {
@@ -488,7 +661,7 @@ function Read-UserProfileSource {
     }
     $resolvedPath = (Resolve-Path -LiteralPath $Source).Path
     return [pscustomobject]@{
-        Text = Get-Content -Raw -Path $resolvedPath
+        Text = Get-Content -Raw -Encoding UTF8 -Path $resolvedPath
         Label = $resolvedPath
         Key = "file:$resolvedPath"
         Type = "file"
@@ -509,6 +682,7 @@ function Get-TextHash {
 function New-WinenvConfig {
     return [pscustomobject]@{
         schemaVersion = 2
+        language = "auto"
         profiles = @()
         resolutions = @()
         legacy = $false
@@ -529,7 +703,7 @@ function Get-ProfileId {
 function Read-WinenvConfig {
     if (-not (Test-Path $ConfigPath)) { return New-WinenvConfig }
     try {
-        $stored = Get-Content -Raw -Path $ConfigPath | ConvertFrom-Json -ErrorAction Stop
+        $stored = Get-Content -Raw -Encoding UTF8 -Path $ConfigPath | ConvertFrom-Json -ErrorAction Stop
     } catch {
         throw "Winenv config is not valid JSON: $ConfigPath"
     }
@@ -537,6 +711,7 @@ function Read-WinenvConfig {
     if ($stored.schemaVersion -eq 2) {
         return [pscustomobject]@{
             schemaVersion = 2
+            language = if ($stored.psobject.Properties.Name -contains "language") { [string]$stored.language } else { "auto" }
             profiles = @($stored.profiles)
             resolutions = @($stored.resolutions)
             legacy = $false
@@ -555,7 +730,7 @@ function Read-WinenvConfig {
             source = $sourceKey
             sourceType = "legacy"
             fileName = ""
-            hash = Get-TextHash (Get-Content -Raw -Path $LocalUserProfilePath)
+            hash = Get-TextHash (Get-Content -Raw -Encoding UTF8 -Path $LocalUserProfilePath)
             enabled = $true
             addedAt = [DateTime]::UtcNow.ToString("o")
             updatedAt = [DateTime]::UtcNow.ToString("o")
@@ -571,6 +746,7 @@ function Write-WinenvConfig {
     New-Item -ItemType Directory -Path $StateRoot -Force | Out-Null
     $stored = [pscustomobject]@{
         schemaVersion = 2
+        language = if ($Config.psobject.Properties.Name -contains "language") { [string]$Config.language } else { "auto" }
         profiles = @($Config.profiles | ForEach-Object {
             [pscustomobject]@{
                 id = [string]$_.id
@@ -593,6 +769,32 @@ function Write-WinenvConfig {
         })
     }
     $stored | ConvertTo-Json -Depth 10 | Set-Content -Path $ConfigPath -Encoding UTF8
+}
+
+function Set-WinenvLanguage {
+    $requested = if ([string]::IsNullOrWhiteSpace($Target)) { "" } else { ConvertTo-WinenvLanguage $Target }
+    if ([string]::IsNullOrWhiteSpace($Target)) {
+        $languageName = if ($Script:WinenvLanguage -eq "zh-CN") { [string]$Script:WinenvLocalization.displayName } else { "English" }
+        Write-WinenvHost "Language: $languageName ($Script:WinenvLanguage)"
+        Write-WinenvHost "Source:   $Script:WinenvLanguageSource"
+        Write-WinenvHost "Use 'win lang en', 'win lang zh', or 'win lang auto' to change it." -ForegroundColor DarkGray
+        return
+    }
+    if (-not $requested) {
+        throw "Unsupported language '$Target'. Use en, zh, or auto."
+    }
+
+    $config = Read-WinenvConfig
+    $config.language = $requested
+    Initialize-WinenvLocalization $requested
+    Write-WinenvConfig $config
+
+    $languageName = if ($Script:WinenvLanguage -eq "zh-CN") { [string]$Script:WinenvLocalization.displayName } else { "English" }
+    if ($DryRun) {
+        Write-WinenvHost "Language would be set to $requested; current preview language is $languageName."
+    } else {
+        Write-WinenvHost "Language set to $requested. Current interface: $languageName." -ForegroundColor Green
+    }
 }
 
 function Get-ProfileSnapshotPath {
@@ -849,18 +1051,18 @@ function Resolve-ProfileConflicts {
     while (@($Result.Conflicts).Count -gt 0) {
         $conflict = @($Result.Conflicts)[0]
         Write-Step "Profile conflict"
-        Write-Host $conflict.Label -ForegroundColor Yellow
+        Write-WinenvHost $conflict.Label -ForegroundColor Yellow
         $candidates = @($conflict.Candidates)
         for ($index = 0; $index -lt $candidates.Count; $index++) {
             $candidate = $candidates[$index]
             $claims = @($candidate.Claims | ForEach-Object { ($_.Ref -split "/", 2)[0] } | Select-Object -Unique) -join ", "
             $version = if ($candidate.Package.version) { " @$($candidate.Package.version)" } else { "" }
-            Write-Host ("  [{0}] {1}: {2}/{3}{4}" -f ($index + 1), $claims, $candidate.Package.owner, $candidate.Package.id, $version)
+            Write-WinenvHost ("  [{0}] {1}: {2}/{3}{4}" -f ($index + 1), $claims, $candidate.Package.owner, $candidate.Package.id, $version)
         }
         if ($DryRun -or $Yes) {
             throw "Profile conflicts require an explicit interactive choice; no profile was changed."
         }
-        $answer = Read-Host "Choose the package to keep [1-$($candidates.Count)]"
+        $answer = Read-WinenvHost "Choose the package to keep [1-$($candidates.Count)]"
         $selectedIndex = 0
         if (-not [int]::TryParse($answer, [ref]$selectedIndex) -or $selectedIndex -lt 1 -or $selectedIndex -gt $candidates.Count) {
             throw "Profile activation cancelled because no valid conflict choice was made."
@@ -886,19 +1088,19 @@ function Read-ProfileDefinition {
 function Show-UserProfileStatus {
     Initialize-ProfileRegistry
     $config = Read-WinenvConfig
-    Write-Host "Runtime profile: $ProfilePath"
+    Write-WinenvHost "Runtime profile: $ProfilePath"
     $entries = @($config.profiles)
     if ($entries.Count -eq 0) {
-        Write-Host "User profiles:   none (runtime only)"
+        Write-WinenvHost "User profiles:   none (runtime only)"
     } else {
-        Write-Host "`nUser profiles"
+        Write-WinenvHost "`nUser profiles"
         $entries |
             Select-Object @{Name = "status"; Expression = { if ($_.enabled) { "on" } else { "off" } }}, id, name,
                 @{Name = "type"; Expression = { $_.sourceType }},
                 @{Name = "source"; Expression = { ([string]$_.source) -replace "^(url|file):", "" }} |
-            Format-Table -AutoSize
+            Format-WinenvTable -AutoSize
     }
-    Write-Host "`nUse 'win use <file-or-https-url>' to add or refresh one; use 'win off <name-or-id>' to disable it." -ForegroundColor DarkGray
+    Write-WinenvHost "`nUse 'win use <file-or-https-url>' to add or refresh one; use 'win off <name-or-id>' to disable it." -ForegroundColor DarkGray
 }
 
 function Set-UserProfile {
@@ -927,7 +1129,7 @@ function Set-UserProfile {
     $source = if ($null -ne $savedEntry) {
         $savedPath = Get-ProfileSnapshotPath $savedEntry
         [pscustomobject]@{
-            Text = Get-Content -Raw -Path $savedPath
+            Text = Get-Content -Raw -Encoding UTF8 -Path $savedPath
             Label = "saved snapshot $($savedEntry.id)"
             Key = [string]$savedEntry.source
             Type = [string]$savedEntry.sourceType
@@ -977,19 +1179,19 @@ function Set-UserProfile {
 
     if ($Apply) {
         Write-Step "Profile preview"
-        Write-Host "Name:    $($userProfile.name)"
-        Write-Host "ID:      $($entry.id)"
-        Write-Host "Source:  $($source.Label)"
-        Write-Host "Active:  $(@($nextConfig.profiles | Where-Object enabled).Count) user profile(s)"
-        Write-Host "Install: $($selectedPackages.Count) package(s) selected by all active defaults"
+        Write-WinenvHost "Name:    $($userProfile.name)"
+        Write-WinenvHost "ID:      $($entry.id)"
+        Write-WinenvHost "Source:  $($source.Label)"
+        Write-WinenvHost "Active:  $(@($nextConfig.profiles | Where-Object enabled).Count) user profile(s)"
+        Write-WinenvHost "Install: $($selectedPackages.Count) package(s) selected by all active defaults"
         $selectedPackages |
             Select-Object displayName, owner, id, @{Name = "claims"; Expression = { @($_._claims) -join "," }} |
             Sort-Object owner, displayName |
-            Format-Table -AutoSize
+            Format-WinenvTable -AutoSize
         if ($customBuckets.Count -gt 0) {
-            Write-Host "`nThird-party Scoop buckets" -ForegroundColor Yellow
-            $customBuckets | Select-Object Name, Url | Format-Table -AutoSize
-            Write-Host "Their manifests can execute installation scripts. Only continue if you trust these publishers." -ForegroundColor Yellow
+            Write-WinenvHost "`nThird-party Scoop buckets" -ForegroundColor Yellow
+            $customBuckets | Select-Object Name, Url | Format-WinenvTable -AutoSize
+            Write-WinenvHost "Their manifests can execute installation scripts. Only continue if you trust these publishers." -ForegroundColor Yellow
         }
         $confirmationPrompt = if ($customBuckets.Count -gt 0) {
             "Trust the listed bucket sources, save this profile snapshot, and install the packages shown above?"
@@ -997,7 +1199,7 @@ function Set-UserProfile {
             "Save this profile snapshot and install the packages shown above?"
         }
         if (-not (Confirm-Operation $confirmationPrompt)) {
-            Write-Host "Profile activation cancelled."
+            Write-WinenvHost "Profile activation cancelled."
             return
         }
         Assert-UnattendedScoopBucketTrust $customBuckets
@@ -1018,13 +1220,13 @@ function Set-UserProfile {
     Sync-WinenvMiseConfig $definition
 
     if (-not $Apply) {
-        Write-Host "Profile '$($userProfile.name)' is active. Run 'win add' to install all active defaults." -ForegroundColor Green
+        Write-WinenvHost "Profile '$($userProfile.name)' is active. Run 'win add' to install all active defaults." -ForegroundColor Green
         return
     }
 
     Install-Packages $definition $selectedPackages -ProfileManagedMise
     Invoke-Migrations
-    Write-Host "`nProfile '$($userProfile.name)' is active and installed." -ForegroundColor Green
+    Write-WinenvHost "`nProfile '$($userProfile.name)' is active and installed." -ForegroundColor Green
 }
 
 function Disable-UserProfile {
@@ -1036,7 +1238,7 @@ function Disable-UserProfile {
     if ($enabled.Count -eq 0) {
         $runtimeOnly = Resolve-ProfileDefinitions $config
         Sync-WinenvMiseConfig $runtimeOnly.Definition
-        Write-Host "No user profile is active; the runtime profile is unchanged."
+        Write-WinenvHost "No user profile is active; the runtime profile is unchanged."
         return
     }
 
@@ -1048,9 +1250,9 @@ function Disable-UserProfile {
             if ($Yes -or $DryRun) {
                 throw "More than one profile is active. Specify one: win off <name-or-id>"
             }
-            Write-Host "Active profiles"
-            $enabled | Select-Object id, name, source | Format-Table -AutoSize
-            $requested = Read-Host "Profile name or ID to disable"
+            Write-WinenvHost "Active profiles"
+            $enabled | Select-Object id, name, source | Format-WinenvTable -AutoSize
+            $requested = Read-WinenvHost "Profile name or ID to disable"
         }
     }
     if ($null -eq $entry) {
@@ -1082,19 +1284,19 @@ function Disable-UserProfile {
     }
 
     Write-Step "Disable profile"
-    Write-Host "Name:       $($entry.name)"
-    Write-Host "Retained:   $(@($retained).Count) package claim(s) still referenced by another active profile"
-    Write-Host "Unclaimed:  $(@($unclaimed).Count) package specification(s) no longer referenced"
+    Write-WinenvHost "Name:       $($entry.name)"
+    Write-WinenvHost "Retained:   $(@($retained).Count) package claim(s) still referenced by another active profile"
+    Write-WinenvHost "Unclaimed:  $(@($unclaimed).Count) package specification(s) no longer referenced"
     if (@($unclaimed).Count -gt 0) {
-        $unclaimed | Select-Object displayName, owner, id | Format-Table -AutoSize
+        $unclaimed | Select-Object displayName, owner, id | Format-WinenvTable -AutoSize
     }
 
     Write-WinenvConfig $nextConfig
     Sync-WinenvMiseConfig $after.Definition
     if ($DryRun) {
-        Write-Host "Profile '$($entry.name)' would be disabled; no installed software would be changed, and its snapshot would be kept."
+        Write-WinenvHost "Profile '$($entry.name)' would be disabled; no installed software would be changed, and its snapshot would be kept."
     } else {
-        Write-Host "Profile '$($entry.name)' disabled; no installed software was changed, and its snapshot was kept." -ForegroundColor Green
+        Write-WinenvHost "Profile '$($entry.name)' disabled; no installed software was changed, and its snapshot was kept." -ForegroundColor Green
     }
 }
 
@@ -1316,7 +1518,7 @@ function Get-WinGetExportInventory {
             return [pscustomobject]@{ Succeeded = $false; Candidates = @() }
         }
         try {
-            $export = Get-Content -Raw -LiteralPath $exportPath | ConvertFrom-Json -ErrorAction Stop
+            $export = Get-Content -Raw -Encoding UTF8 -LiteralPath $exportPath | ConvertFrom-Json -ErrorAction Stop
         } catch {
             return [pscustomobject]@{ Succeeded = $false; Candidates = @() }
         }
@@ -1349,7 +1551,7 @@ function Resolve-WinGetInstalledInventory {
             if ($_.Manager -ne "winget") { return $false }
             $tableId = [string]$_.Id
             if ($tableId.Equals([string]$exported.Id, [StringComparison]::OrdinalIgnoreCase)) { return $true }
-            $prefix = [regex]::Replace($tableId, "(?:…|\.\.\.)$", "")
+            $prefix = [regex]::Replace($tableId, "(?:\u2026|\.\.\.)$", "")
             return $prefix.Length -ge 4 -and ([string]$exported.Id).StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
         })
         if ($tableMatch.Count -eq 1) {
@@ -1513,7 +1715,7 @@ function Show-InstalledInventory {
     }
     Write-Step "Installed software inventory"
     if ($candidates.Count -eq 0) {
-        Write-Host "No installed software matched '$Query'." -ForegroundColor Yellow
+        Write-WinenvHost "No installed software matched '$Query'." -ForegroundColor Yellow
         return
     }
 
@@ -1527,13 +1729,13 @@ function Show-InstalledInventory {
             version = [string]$_.Version
         }
     })
-    $rows | Sort-Object status, manager, name | Format-Table -AutoSize
+    $rows | Sort-Object status, manager, name | Format-WinenvTable -AutoSize
 
     $managedCount = @($rows | Where-Object status -eq "managed").Count
     $adoptableCount = @($rows | Where-Object status -eq "adoptable").Count
     $localCount = @($rows | Where-Object status -eq "local").Count
-    Write-Host "managed: $managedCount | adoptable: $adoptableCount | local-only: $localCount" -ForegroundColor DarkGray
-    Write-Host "'local' means Windows knows the app is installed, but WinGet could not match it to a configured source. Scan never changes software or profiles." -ForegroundColor DarkGray
+    Write-WinenvHost "managed: $managedCount | adoptable: $adoptableCount | local-only: $localCount" -ForegroundColor DarkGray
+    Write-WinenvHost "'local' means Windows knows the app is installed, but WinGet could not match it to a configured source. Scan never changes software or profiles." -ForegroundColor DarkGray
 }
 
 function Get-AdoptedPackageKey {
@@ -1603,7 +1805,7 @@ function Get-AdoptedScoopBuckets {
         if ($match.Count -gt 0 -and ([string]$match[0].Source) -match "^https://") {
             $buckets += ,[pscustomobject]@{ name = [string]$name; url = (Get-NormalizedScoopBucketUrl ([string]$match[0].Source)) }
         } else {
-            Write-Host "Could not resolve the source URL for Scoop bucket '$name'; it will be kept by name." -ForegroundColor Yellow
+            Write-WinenvHost "Could not resolve the source URL for Scoop bucket '$name'; it will be kept by name." -ForegroundColor Yellow
             $buckets += [string]$name
         }
     }
@@ -1628,7 +1830,7 @@ function Adopt-InstalledPackages {
     )
 
     if ($Manager -eq "managed") {
-        Write-Host "Already managed packages do not need adoption. Use 'win scan -From managed' to review them." -ForegroundColor DarkGray
+        Write-WinenvHost "Already managed packages do not need adoption. Use 'win scan -From managed' to review them." -ForegroundColor DarkGray
         return
     }
 
@@ -1638,15 +1840,15 @@ function Adopt-InstalledPackages {
     })
     $localCount = @($inventory | Where-Object { -not [bool]$_.Adoptable }).Count
     if ($adoptable.Count -eq 0) {
-        Write-Host "No unclaimed reproducible packages matched '$Query'." -ForegroundColor Yellow
+        Write-WinenvHost "No unclaimed reproducible packages matched '$Query'." -ForegroundColor Yellow
         if ($localCount -gt 0) {
-            Write-Host "$localCount local-only app(s) were left untouched because no configured source can reproduce them." -ForegroundColor DarkGray
+            Write-WinenvHost "$localCount local-only app(s) were left untouched because no configured source can reproduce them." -ForegroundColor DarkGray
         }
         return
     }
 
     $selected = @(Select-PackageCandidates $adoptable "Adopt installed > " -Multi)
-    if ($selected.Count -eq 0) { Write-Host "No packages selected."; return }
+    if ($selected.Count -eq 0) { Write-WinenvHost "No packages selected."; return }
     $newPackages = @($selected | ForEach-Object { ConvertTo-AdoptedPackage $_ })
 
     Initialize-ProfileRegistry
@@ -1674,15 +1876,15 @@ function Adopt-InstalledPackages {
     Assert-ProfileDefinition $adoptedProfile
 
     Write-Step "Adopt installed software"
-    $newPackages | Select-Object displayName, owner, id, version | Format-Table -AutoSize
+    $newPackages | Select-Object displayName, owner, id, version | Format-WinenvTable -AutoSize
     $previousCount = if ($null -ne $existingProfile) { @($existingProfile.packages).Count } else { 0 }
-    Write-Host "Selected: $($newPackages.Count) | previous claims kept: $previousCount | resulting claims: $(@($adoptedProfile.packages).Count)" -ForegroundColor DarkGray
+    Write-WinenvHost "Selected: $($newPackages.Count) | previous claims kept: $previousCount | resulting claims: $(@($adoptedProfile.packages).Count)" -ForegroundColor DarkGray
     if ($existingEntry.Count -gt 0 -and -not [bool]$existingEntry[0].enabled) {
-        Write-Host "The retained '$AdoptedProfileName' snapshot is currently disabled; saving will re-enable all of its claims." -ForegroundColor Yellow
+        Write-WinenvHost "The retained '$AdoptedProfileName' snapshot is currently disabled; saving will re-enable all of its claims." -ForegroundColor Yellow
     }
-    Write-Host "This records the selected packages in a local profile. It does not reinstall, upgrade, or uninstall anything." -ForegroundColor DarkGray
+    Write-WinenvHost "This records the selected packages in a local profile. It does not reinstall, upgrade, or uninstall anything." -ForegroundColor DarkGray
     if (-not (Confirm-Operation "Save and enable the resulting local '$AdoptedProfileName' profile?")) {
-        Write-Host "Adoption cancelled."
+        Write-WinenvHost "Adoption cancelled."
         return
     }
 
@@ -1720,9 +1922,9 @@ function Adopt-InstalledPackages {
     Write-WinenvConfig $nextConfig
     Sync-WinenvMiseConfig $resolved.Definition
     if ($DryRun) {
-        Write-Host "The selected packages would be added to the local '$AdoptedProfileName' profile; installed software would not change."
+        Write-WinenvHost "The selected packages would be added to the local '$AdoptedProfileName' profile; installed software would not change."
     } else {
-        Write-Host "Selected packages are now claimed by the local '$AdoptedProfileName' profile; installed software was not changed." -ForegroundColor Green
+        Write-WinenvHost "Selected packages are now claimed by the local '$AdoptedProfileName' profile; installed software was not changed." -ForegroundColor Green
     }
 }
 
@@ -1768,7 +1970,7 @@ function Search-PackageCatalogs {
     Write-Step "Live package catalogs"
     $candidates = @(Get-CatalogCandidates $Definition $Target)
     if ($candidates.Count -eq 0) {
-        Write-Host "No matching packages were found in the available catalogs." -ForegroundColor Yellow
+        Write-WinenvHost "No matching packages were found in the available catalogs." -ForegroundColor Yellow
         return
     }
     $candidates | Select-Object Manager, Source, Name, Id, Version,
@@ -1776,8 +1978,8 @@ function Search-PackageCatalogs {
         @{Name = "Install"; Expression = {
             if ($_.ManagedKey) { "win add $($_.ManagedKey)" } else { "win add $($_.Token)" }
         }} |
-        Format-Table -AutoSize
-    Write-Host "Results with the same name stay separate by manager; Winenv never guesses between them." -ForegroundColor DarkGray
+        Format-WinenvTable -AutoSize
+    Write-WinenvHost "Results with the same name stay separate by manager; Winenv never guesses between them." -ForegroundColor DarkGray
 }
 
 function Show-PackageInfo {
@@ -1789,23 +1991,23 @@ function Show-PackageInfo {
     $package = Resolve-PackageReference $Definition $Target
     if ($null -eq $package) { throw "Unknown package reference: $Target" }
 
-    Write-Host $package.displayName -ForegroundColor Cyan
-    Write-Host ("Reference: {0}" -f $Target)
+    Write-WinenvHost $package.displayName -ForegroundColor Cyan
+    Write-WinenvHost ("Reference: {0}" -f $Target)
     if ([bool]$package._runtime) {
-        Write-Host ("Fallback:  {0}" -f $package.owner)
+        Write-WinenvHost ("Fallback:  {0}" -f $package.owner)
     } else {
-        Write-Host ("Manager:   {0}" -f $package.owner)
+        Write-WinenvHost ("Manager:   {0}" -f $package.owner)
     }
-    Write-Host ("Package:   {0}" -f $package.id)
+    Write-WinenvHost ("Package:   {0}" -f $package.id)
     if (@($package.profiles).Count -gt 0) {
-        Write-Host ("Profiles:  {0}" -f (@($package.profiles) -join ", "))
+        Write-WinenvHost ("Profiles:  {0}" -f (@($package.profiles) -join ", "))
     }
     if (@($package.commands).Count -gt 0) {
-        Write-Host ("Commands:  {0}" -f (@($package.commands) -join ", "))
+        Write-WinenvHost ("Commands:  {0}" -f (@($package.commands) -join ", "))
     }
-    if ($package.instructions) { Write-Host "`n$($package.instructions)" }
+    if ($package.instructions) { Write-WinenvHost "`n$($package.instructions)" }
 
-    Write-Host "`nPackage details" -ForegroundColor DarkCyan
+    Write-WinenvHost "`nPackage details" -ForegroundColor DarkCyan
     switch ($package.owner) {
         "winget" {
             $managerProbe = Get-ManagerProbe "winget"
@@ -1816,21 +2018,21 @@ function Show-PackageInfo {
                 } else {
                     Invoke-Native $managerProbe.Path @("show", "--id", [string]$package.id, "--exact", "--source", $source, "--accept-source-agreements", "--disable-interactivity") -IgnoreExitCode
                 }
-            } else { Write-Host "WinGet is unavailable." }
+            } else { Write-WinenvHost "WinGet is unavailable." }
         }
         "scoop" {
             $managerProbe = Get-ManagerProbe "scoop"
             if ($managerProbe.Status -eq "available") {
                 $qualifiedId = if ($package.bucket) { "$($package.bucket)/$($package.id)" } else { [string]$package.id }
                 Invoke-Native $managerProbe.Path @("info", $qualifiedId) -IgnoreExitCode
-            } else { Write-Host "Scoop is unavailable." }
+            } else { Write-WinenvHost "Scoop is unavailable." }
         }
         "mise" {
             $managerProbe = Get-ManagerProbe "mise"
             if ($managerProbe.Status -eq "available") { Invoke-Native $managerProbe.Path @("registry", [string]$package.id) -IgnoreExitCode }
-            else { Write-Host "mise is unavailable." }
+            else { Write-WinenvHost "mise is unavailable." }
         }
-        "vendor" { Write-Host "This package is managed by its vendor installer." }
+        "vendor" { Write-WinenvHost "This package is managed by its vendor installer." }
     }
 }
 
@@ -1843,7 +2045,7 @@ function Select-PackageCandidates {
     $runtimeMarker = [pscustomobject]@{ key = "fzf"; _runtime = $true }
     $fzfProbe = Get-RuntimeRequirementProbe $runtimeMarker
     if ($fzfProbe.Status -ne "available") {
-        $Candidates | Select-Object Manager, Source, Name, Id, Version, ManagedKey | Format-Table -AutoSize
+        $Candidates | Select-Object Manager, Source, Name, Id, Version, ManagedKey | Format-WinenvTable -AutoSize
         throw "Interactive selection requires fzf $($fzfProbe.MinimumVersion) or newer. Run 'win add fzf', then 'win check'."
     }
 
@@ -1859,15 +2061,15 @@ function Select-PackageCandidates {
     } else {
         "pwsh"
     }
-    $previewCommand = "`"$previewHost`" -NoLogo -NoProfile -File `"$PSCommandPath`" show {1}"
+    $previewCommand = "`"$previewHost`" -NoLogo -NoProfile -File `"$PSCommandPath`" show {1} -Language $Script:WinenvLanguage"
     $fzfArguments = @(
         "--delimiter", "`t", "--with-nth", "2,3,4,5,6,7",
-        "--header", "Manager | Source | Name | ID | Version | Baseline   (Alt-P: details, Esc: cancel)",
-        "--preview", $previewCommand, "--preview-label", "Alt-P: details | Alt-J/K: scroll",
+        "--header", (ConvertTo-WinenvLocalizedText "Manager | Source | Name | ID | Version | Baseline   (Alt-P: details, Esc: cancel)"),
+        "--preview", $previewCommand, "--preview-label", (ConvertTo-WinenvLocalizedText "Alt-P: details | Alt-J/K: scroll"),
         "--preview-window", "down:60%:wrap",
         "--bind", "alt-p:toggle-preview,alt-d:preview-half-page-down,alt-u:preview-half-page-up,alt-k:preview-up,alt-j:preview-down",
         "--color", "pointer:green,marker:green,prompt:cyan", "--border", "rounded",
-        "--height", "95%", "--layout", "reverse", "--prompt", $Prompt
+        "--height", "95%", "--layout", "reverse", "--prompt", (ConvertTo-WinenvLocalizedText $Prompt)
     )
     if ($Multi) { $fzfArguments = @("--multi") + $fzfArguments }
 
@@ -1885,27 +2087,27 @@ function Open-PackageStore {
         [string]$Query = $Target
     )
     if ([string]::IsNullOrWhiteSpace($Query) -and $Manager -ne "managed") {
-        $Query = Read-Host "Search WinGet, Scoop, and mise"
+        $Query = Read-WinenvHost "Search WinGet, Scoop, and mise"
         if ([string]::IsNullOrWhiteSpace($Query)) {
-            Write-Host "No search entered."
+            Write-WinenvHost "No search entered."
             return
         }
     }
     $candidates = @(Get-CatalogCandidates $Definition $Query)
     if ($candidates.Count -eq 0) {
-        Write-Host "No matching packages were found in the available catalogs." -ForegroundColor Yellow
+        Write-WinenvHost "No matching packages were found in the available catalogs." -ForegroundColor Yellow
         return
     }
 
     $selected = @(Select-PackageCandidates $candidates "Winenv Store > " -Multi)
-    if ($selected.Count -eq 0) { Write-Host "No packages selected."; return }
+    if ($selected.Count -eq 0) { Write-WinenvHost "No packages selected."; return }
     $packages = @($selected | ForEach-Object { ConvertTo-PackageDefinition $_ })
 
     Write-Step "Installing selected packages"
-    $selected | Select-Object Manager, Source, Name, Id, Version | Format-Table -AutoSize
+    $selected | Select-Object Manager, Source, Name, Id, Version | Format-WinenvTable -AutoSize
     Install-Packages $Definition $packages
     Invoke-Migrations
-    Write-Host "`nSelected packages installed." -ForegroundColor Green
+    Write-WinenvHost "`nSelected packages installed." -ForegroundColor Green
 }
 
 function Assert-ProfileDefinition {
@@ -2033,8 +2235,8 @@ function Assert-ProfileDefinition {
 function Confirm-Operation {
     param([string]$Prompt)
     if ($Yes -or $DryRun) { return $true }
-    $answer = Read-Host "$Prompt [y/N]"
-    return $answer -match "^(y|yes)$"
+    $answer = Read-WinenvHost "$Prompt [y/N]"
+    return $answer -match "^(?i:y|yes|\u662f|\u597d|\u786e\u8ba4)$"
 }
 
 function Resolve-RuntimeInstallPlan {
@@ -2086,9 +2288,9 @@ function Resolve-RuntimeInstallPlan {
             Location = $probe.Path
         })
         Write-Step "Runtime requirement conflict"
-        Write-Host "$($probe.Name): $reason." -ForegroundColor Yellow
-        Write-Host "Existing command: $($probe.Path)"
-        Write-Host "Fallback package: $($package.owner)/$($package.id)"
+        Write-WinenvHost "$($probe.Name): $reason." -ForegroundColor Yellow
+        Write-WinenvHost "Existing command: $($probe.Path)"
+        Write-WinenvHost "Fallback package: $($package.owner)/$($package.id)"
         if ($DryRun -or $Yes) {
             throw "A broken or outdated runtime command requires an explicit interactive choice; nothing was installed."
         }
@@ -2101,14 +2303,19 @@ function Resolve-RuntimeInstallPlan {
 
     if ($rows.Count -gt 0) {
         Write-Step "Runtime requirements"
-        Write-Host ("{0,-10} {1,-18} {2,-12} {3}" -f "action", "requirement", "version", "location") -ForegroundColor DarkGray
+        Write-WinenvHost ("{0,-10} {1,-18} {2,-12} {3}" -f
+            (Get-WinenvLocalizedColumnName "action"),
+            (Get-WinenvLocalizedColumnName "requirement"),
+            (Get-WinenvLocalizedColumnName "version"),
+            (Get-WinenvLocalizedColumnName "location")) -ForegroundColor DarkGray
         foreach ($row in $rows) {
             $color = switch ($row.Action) {
                 "reuse" { "Green" }
                 "install" { "Cyan" }
                 default { "Yellow" }
             }
-            Write-Host ("{0,-10} {1,-18} {2,-12} {3}" -f $row.Action, $row.Requirement, $row.Version, $row.Location) -ForegroundColor $color
+            $localizedAction = Get-WinenvLocalizedDisplayValue "action" $row.Action
+            Write-WinenvHost ("{0,-10} {1,-18} {2,-12} {3}" -f $localizedAction, $row.Requirement, $row.Version, $row.Location) -ForegroundColor $color
         }
     }
 
@@ -2129,7 +2336,8 @@ function Assert-RuntimeRequirements {
             $detail = if ($probe.Path) { "The effective executable is $($probe.Path)." } else { "The command is still absent from PATH." }
             throw "$($probe.Name) was installed through $($package.owner), but its requirement is still $($probe.Status). $detail Open a new PowerShell window, run 'win check', and resolve the reported PATH conflict."
         }
-        Write-Host ("ready     {0,-18} {1,-12} {2}" -f $probe.Name, $probe.Version, $probe.Path) -ForegroundColor Green
+        $ready = Get-WinenvLocalizedDisplayValue "action" "ready"
+        Write-WinenvHost ("{0,-10} {1,-18} {2,-12} {3}" -f $ready, $probe.Name, $probe.Version, $probe.Path) -ForegroundColor Green
     }
 }
 
@@ -2237,8 +2445,8 @@ function Ensure-Scoop {
         $sha256.Dispose()
     }
 
-    Write-Host "Source: $installerUri"
-    Write-Host "SHA-256: $hash"
+    Write-WinenvHost "Source: $installerUri"
+    Write-WinenvHost "SHA-256: $hash"
     if (-not (Confirm-Operation "Execute this Scoop installer for the current user?")) {
         throw "Scoop installation was cancelled."
     }
@@ -2317,9 +2525,9 @@ function Ensure-ScoopBucket {
     if ($bucket.Url) { $arguments += $bucket.Url }
     if ($DryRun) {
         if ($bucket.Url) {
-            Write-Host "Third-party Scoop bucket: $($bucket.Name)" -ForegroundColor Yellow
-            Write-Host "Source: $($bucket.Url)"
-            Write-Host "Its manifests may execute installation scripts. Review and trust the publisher before adding it." -ForegroundColor Yellow
+            Write-WinenvHost "Third-party Scoop bucket: $($bucket.Name)" -ForegroundColor Yellow
+            Write-WinenvHost "Source: $($bucket.Url)"
+            Write-WinenvHost "Its manifests may execute installation scripts. Review and trust the publisher before adding it." -ForegroundColor Yellow
         }
         Ensure-ScoopGit
         Invoke-Native (Get-ResolvedManagerCommand "scoop") $arguments
@@ -2341,10 +2549,10 @@ function Ensure-ScoopBucket {
     $approvalKey = Get-ScoopBucketApprovalKey $bucket
     if (-not $ApprovedScoopBucketSources.ContainsKey($approvalKey)) {
         Write-Step "Trust a third-party Scoop bucket"
-        Write-Host "Name:   $($bucket.Name)"
-        Write-Host "Source: $($bucket.Url)"
-        if ($matches.Count -gt 0) { Write-Host "Current source: $($matches[0].Source)" }
-        Write-Host "Scoop manifests can execute installation scripts. Only continue if you trust this publisher." -ForegroundColor Yellow
+        Write-WinenvHost "Name:   $($bucket.Name)"
+        Write-WinenvHost "Source: $($bucket.Url)"
+        if ($matches.Count -gt 0) { Write-WinenvHost "Current source: $($matches[0].Source)" }
+        Write-WinenvHost "Scoop manifests can execute installation scripts. Only continue if you trust this publisher." -ForegroundColor Yellow
         if ($Yes) {
             throw "A new or changed third-party Scoop bucket requires explicit interactive trust; nothing was changed."
         }
@@ -2383,15 +2591,15 @@ function Invoke-ScoopBucketCommand {
     if ([string]::IsNullOrWhiteSpace($Target)) {
         $scoopCommand = Get-OptionalManagerCommand "scoop"
         if ($null -eq $scoopCommand) {
-            Write-Host "Scoop is not installed. Add a bucket with: win bucket <name> [https-url]" -ForegroundColor Yellow
+            Write-WinenvHost "Scoop is not installed. Add a bucket with: win bucket <name> [https-url]" -ForegroundColor Yellow
             return
         }
         $inventory = @(Get-ScoopBucketInventory $scoopCommand)
         Write-Step "Enabled Scoop buckets"
         if ($inventory.Count -eq 0) {
-            Write-Host "No Scoop buckets are enabled. Add the default source with: win bucket main"
+            Write-WinenvHost "No Scoop buckets are enabled. Add the default source with: win bucket main"
         } else {
-            $inventory | Format-Table Name, Source -AutoSize
+            $inventory | Format-WinenvTable Name, Source -AutoSize
         }
         return
     }
@@ -2405,7 +2613,7 @@ function Invoke-ScoopBucketCommand {
     Assert-UnattendedScoopBucketTrust @($bucket)
     Ensure-Scoop
     Ensure-ScoopBucket $bucket
-    if (-not $DryRun) { Write-Host "Scoop bucket '$($bucket.Name)' is ready." -ForegroundColor Green }
+    if (-not $DryRun) { Write-WinenvHost "Scoop bucket '$($bucket.Name)' is ready." -ForegroundColor Green }
 }
 
 function Get-ReferenceExtension {
@@ -2585,20 +2793,20 @@ function Install-LocalWindowsInstaller {
     } else {
         "$($inspection.Size) bytes"
     }
-    Write-Host "File:       $($inspection.Path)"
-    Write-Host "Type:       $($inspection.Type)"
-    Write-Host "Size:       $sizeLabel"
-    if ($inspection.Product) { Write-Host "Product:    $($inspection.Product)" }
-    if ($inspection.Version) { Write-Host "Version:    $($inspection.Version)" }
-    Write-Host "SHA-256:    $($inspection.Sha256)"
-    if ($expectedHashVerified) { Write-Host "Hash check: matched -Hash" -ForegroundColor Green }
-    Write-Host "Signature:  $($inspection.SignatureStatus)"
-    if ($inspection.Publisher) { Write-Host "Publisher:  $($inspection.Publisher)" }
+    Write-WinenvHost "File:       $($inspection.Path)"
+    Write-WinenvHost "Type:       $($inspection.Type)"
+    Write-WinenvHost "Size:       $sizeLabel"
+    if ($inspection.Product) { Write-WinenvHost "Product:    $($inspection.Product)" }
+    if ($inspection.Version) { Write-WinenvHost "Version:    $($inspection.Version)" }
+    Write-WinenvHost "SHA-256:    $($inspection.Sha256)"
+    if ($expectedHashVerified) { Write-WinenvHost "Hash check: matched -Hash" -ForegroundColor Green }
+    Write-WinenvHost "Signature:  $($inspection.SignatureStatus)"
+    if ($inspection.Publisher) { Write-WinenvHost "Publisher:  $($inspection.Publisher)" }
     if ($inspection.SignatureStatus -ne "Valid") {
-        Write-Host $inspection.SignatureMessage -ForegroundColor Yellow
+        Write-WinenvHost $inspection.SignatureMessage -ForegroundColor Yellow
     }
     if ($HasInstallerArguments) {
-        Write-Host "Arguments:  $(Join-WindowsCommandLineArguments $InstallerArguments)"
+        Write-WinenvHost "Arguments:  $(Join-WindowsCommandLineArguments $InstallerArguments)"
     }
 
     $safeForUnattended = $inspection.SignatureStatus -eq "Valid" -or ($inspection.SignatureStatus -eq "NotSigned" -and $expectedHashVerified)
@@ -2606,7 +2814,7 @@ function Install-LocalWindowsInstaller {
         throw "This installer is not covered by a valid Authenticode signature or a pinned hash for an unsigned file. Run interactively to review it, or provide a trusted -Hash value."
     }
     if (-not (Confirm-Operation "Run this $($inspection.Type) installer?")) {
-        Write-Host "Installer launch cancelled."
+        Write-WinenvHost "Installer launch cancelled."
         return
     }
 
@@ -2621,12 +2829,12 @@ function Install-LocalWindowsInstaller {
         throw "$($inspection.Type) installer exited with code $exitCode.$logHint"
     }
     if ($exitCode -in @(1641, 3010)) {
-        Write-Host "Installation completed and Windows reports that a restart is required." -ForegroundColor Yellow
+        Write-WinenvHost "Installation completed and Windows reports that a restart is required." -ForegroundColor Yellow
     } else {
-        Write-Host "Installer completed successfully." -ForegroundColor Green
+        Write-WinenvHost "Installer completed successfully." -ForegroundColor Green
     }
-    if ($logPath) { Write-Host "MSI log: $logPath" }
-    Write-Host "If the installer registered the app with Windows, it will appear in 'win rm'." -ForegroundColor DarkGray
+    if ($logPath) { Write-WinenvHost "MSI log: $logPath" }
+    Write-WinenvHost "If the installer registered the app with Windows, it will appear in 'win rm'." -ForegroundColor DarkGray
 }
 
 function Get-WinGetManifestFiles {
@@ -2664,17 +2872,17 @@ function Install-WinGetManifest {
     }
 
     Write-Step "Local WinGet manifest preview"
-    Write-Host "Path: $path"
+    Write-WinenvHost "Path: $path"
     $files | ForEach-Object {
         [pscustomobject]@{
             File = $_.Name
             Size = $_.Length
             Sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
         }
-    } | Format-Table -AutoSize
-    Write-Host "WinGet manifests select and run installers. Only continue if you trust these local files and their installer URLs." -ForegroundColor Yellow
+    } | Format-WinenvTable -AutoSize
+    Write-WinenvHost "WinGet manifests select and run installers. Only continue if you trust these local files and their installer URLs." -ForegroundColor Yellow
     if (-not (Confirm-Operation "Validate and install this local WinGet manifest?")) {
-        Write-Host "Manifest installation cancelled."
+        Write-WinenvHost "Manifest installation cancelled."
         return
     }
 
@@ -2687,7 +2895,7 @@ function Install-WinGetManifest {
     Invoke-Native $wingetCommand @(
         "install", "--manifest", $path, "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"
     )
-    if (-not $DryRun) { Write-Host "Local WinGet manifest installed successfully." -ForegroundColor Green }
+    if (-not $DryRun) { Write-WinenvHost "Local WinGet manifest installed successfully." -ForegroundColor Green }
 }
 
 function Test-ScoopManifestReference {
@@ -2777,7 +2985,7 @@ function Install-ScoopManifest {
             $sourceLabel = $sourcePath
         }
 
-        try { $manifest = Get-Content -Raw -LiteralPath $snapshotPath | ConvertFrom-Json -ErrorAction Stop } catch {
+        try { $manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $snapshotPath | ConvertFrom-Json -ErrorAction Stop } catch {
             throw "Scoop manifest is not valid JSON: $sourceLabel"
         }
         if ($manifest -isnot [pscustomobject]) { throw "Scoop manifest root must be a JSON object: $sourceLabel" }
@@ -2787,15 +2995,15 @@ function Install-ScoopManifest {
         }
 
         Write-Step "Scoop manifest preview"
-        Write-Host "Source:      $sourceLabel"
-        Write-Host "Manifest:    $([IO.Path]::GetFileName($snapshotPath))"
-        if ($manifestProperties -contains "version") { Write-Host "Version:     $($manifest.version)" }
-        if ($manifestProperties -contains "homepage") { Write-Host "Homepage:    $($manifest.homepage)" }
-        if ($manifestProperties -contains "description") { Write-Host "Description: $($manifest.description)" }
-        Write-Host "SHA-256:     $((Get-FileHash -LiteralPath $snapshotPath -Algorithm SHA256).Hash.ToLowerInvariant())"
-        Write-Host "Scoop manifests can execute installation scripts. Review the source and hash before continuing." -ForegroundColor Yellow
+        Write-WinenvHost "Source:      $sourceLabel"
+        Write-WinenvHost "Manifest:    $([IO.Path]::GetFileName($snapshotPath))"
+        if ($manifestProperties -contains "version") { Write-WinenvHost "Version:     $($manifest.version)" }
+        if ($manifestProperties -contains "homepage") { Write-WinenvHost "Homepage:    $($manifest.homepage)" }
+        if ($manifestProperties -contains "description") { Write-WinenvHost "Description: $($manifest.description)" }
+        Write-WinenvHost "SHA-256:     $((Get-FileHash -LiteralPath $snapshotPath -Algorithm SHA256).Hash.ToLowerInvariant())"
+        Write-WinenvHost "Scoop manifests can execute installation scripts. Review the source and hash before continuing." -ForegroundColor Yellow
         if (-not (Confirm-Operation "Install this Scoop manifest?")) {
-            Write-Host "Manifest installation cancelled."
+            Write-WinenvHost "Manifest installation cancelled."
             return
         }
 
@@ -2847,7 +3055,7 @@ $endMarker
 
         $directory = Split-Path -Parent $path
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
-        $existing = if (Test-Path $path) { Get-Content -Raw -Path $path } else { "" }
+        $existing = if (Test-Path $path) { Get-Content -Raw -Encoding UTF8 -Path $path } else { "" }
         $pattern = "(?s)" + [Regex]::Escape($startMarker) + ".*?" + [Regex]::Escape($endMarker)
         if ($existing -match $pattern) {
             $updated = [Regex]::Replace($existing, $pattern, $block.TrimEnd())
@@ -2949,10 +3157,16 @@ function Resolve-ExistingPackagePlan {
 
     if ($rows.Count -gt 0) {
         Write-Step "Software plan"
-        Write-Host ("{0,-9} {1,-8} {2,-28} {3}" -f "action", "manager", "name", "version") -ForegroundColor DarkGray
+        Write-WinenvHost ("{0,-9} {1,-8} {2,-28} {3}" -f
+            (Get-WinenvLocalizedColumnName "action"),
+            (Get-WinenvLocalizedColumnName "manager"),
+            (Get-WinenvLocalizedColumnName "name"),
+            (Get-WinenvLocalizedColumnName "version")) -ForegroundColor DarkGray
         foreach ($row in $rows) {
             $color = if ($row.Action -eq "reuse") { "Green" } elseif ($row.Action -eq "install") { "Cyan" } else { "Yellow" }
-            Write-Host ("{0,-9} {1,-8} {2,-28} {3}" -f $row.Action, $row.Manager, $row.Name, $row.Version) -ForegroundColor $color
+            $localizedAction = Get-WinenvLocalizedDisplayValue "action" $row.Action
+            $localizedVersion = ConvertTo-WinenvLocalizedText ([string]$row.Version)
+            Write-WinenvHost ("{0,-9} {1,-8} {2,-28} {3}" -f $localizedAction, $row.Manager, $row.Name, $localizedVersion) -ForegroundColor $color
         }
     }
     return @($remaining | ForEach-Object { $_ })
@@ -3019,8 +3233,8 @@ function Install-Packages {
             "scoop" { Install-ScoopPackage $package }
             "mise" { Install-MisePackage $package -ProfileManaged:$ProfileManagedMise }
             "vendor" {
-                Write-Host "Manual vendor-managed package: $($package.displayName)" -ForegroundColor Yellow
-                if ($package.instructions) { Write-Host $package.instructions }
+                Write-WinenvHost "Manual vendor-managed package: $($package.displayName)" -ForegroundColor Yellow
+                if ($package.instructions) { Write-WinenvHost $package.instructions }
             }
         }
     }
@@ -3071,7 +3285,7 @@ function Install-SelectedPackages {
     }
     $selected = @(Select-PackageCandidates $candidates "Install > " -Multi)
     if ($selected.Count -eq 0) {
-        Write-Host "No packages selected."
+        Write-WinenvHost "No packages selected."
         return
     }
     $packages = @($selected | ForEach-Object { ConvertTo-PackageDefinition $_ })
@@ -3082,7 +3296,7 @@ function Read-State {
     if (-not (Test-Path $StatePath)) {
         return @{ appliedMigrations = @() }
     }
-    $state = Get-Content -Raw -Path $StatePath | ConvertFrom-Json
+    $state = Get-Content -Raw -Encoding UTF8 -Path $StatePath | ConvertFrom-Json
     return @{ appliedMigrations = @($state.appliedMigrations) }
 }
 
@@ -3116,37 +3330,46 @@ function Invoke-Migrations {
 function Show-Profile {
     param($Definition)
     Show-UserProfileStatus
-    Write-Host "`nEffective packages"
+    Write-WinenvHost "`nEffective packages"
     Get-SelectedPackages $Definition |
         Sort-Object owner, key |
         Select-Object key, displayName,
             @{Name = "provider"; Expression = { if ([bool]$_._runtime) { "$($_.owner) (fallback)" } else { $_.owner } }}, id,
             @{Name = "claims"; Expression = { if ($_.psobject.Properties.Name -contains "_claims") { @($_._claims) -join "," } else { "runtime" } }} |
-        Format-Table -AutoSize
+        Format-WinenvTable -AutoSize
 }
 
 function Test-ProfileHealth {
     param($Definition)
     Write-Step "Validating package ownership"
-    Write-Host "All active profile claims resolved without ambiguity." -ForegroundColor Green
+    Write-WinenvHost "All active profile claims resolved without ambiguity." -ForegroundColor Green
 
     $selectedPackages = Get-SelectedPackages $Definition
 
     Write-Step "Checking managers"
-    Write-Host ("{0,-10} {1,-11} {2,-12} {3}" -f "manager", "status", "version", "path") -ForegroundColor DarkGray
+    Write-WinenvHost ("{0,-10} {1,-11} {2,-12} {3}" -f
+        (Get-WinenvLocalizedColumnName "manager"),
+        (Get-WinenvLocalizedColumnName "status"),
+        (Get-WinenvLocalizedColumnName "version"),
+        (Get-WinenvLocalizedColumnName "path")) -ForegroundColor DarkGray
     $managerProbes = @(@("winget", "scoop", "mise") | ForEach-Object { Get-ManagerProbe $_ })
     foreach ($probe in $managerProbes) {
         $version = if ($null -ne $probe.Version) { $probe.Version.ToString() } else { "-" }
         $path = if ($probe.Path) { $probe.Path } else { "-" }
         $color = if ($probe.Status -eq "available") { "Green" } else { "Yellow" }
-        Write-Host ("{0,-10} {1,-11} {2,-12} {3}" -f $probe.Name, $probe.Status, $version, $path) -ForegroundColor $color
+        $localizedStatus = Get-WinenvLocalizedDisplayValue "status" $probe.Status
+        Write-WinenvHost ("{0,-10} {1,-11} {2,-12} {3}" -f $probe.Name, $localizedStatus, $version, $path) -ForegroundColor $color
         if (@($probe.OtherPaths).Count -gt 0) {
-            Write-Host ("           other paths: {0}" -f (@($probe.OtherPaths) -join " | ")) -ForegroundColor Yellow
+            Write-WinenvHost ("           other paths: {0}" -f (@($probe.OtherPaths) -join " | ")) -ForegroundColor Yellow
         }
     }
 
     Write-Step "Checking Winenv runtime requirements"
-    Write-Host ("{0,-10} {1,-18} {2,-12} {3}" -f "action", "requirement", "version", "path or fallback") -ForegroundColor DarkGray
+    Write-WinenvHost ("{0,-10} {1,-18} {2,-12} {3}" -f
+        (Get-WinenvLocalizedColumnName "action"),
+        (Get-WinenvLocalizedColumnName "requirement"),
+        (Get-WinenvLocalizedColumnName "version"),
+        (ConvertTo-WinenvLocalizedText "path or fallback")) -ForegroundColor DarkGray
     foreach ($package in @($selectedPackages | Where-Object { $null -ne (Get-RuntimeRequirement $_) })) {
         $probe = Get-RuntimeRequirementProbe $package
         $version = if ($null -ne $probe.Version) { $probe.Version.ToString() } else { "-" }
@@ -3157,15 +3380,16 @@ function Test-ProfileHealth {
         }
         $location = if ($probe.Status -eq "missing") { "via $($package.owner)" } else { $probe.Path }
         $color = if ($probe.Status -eq "available") { "Green" } elseif ($probe.Status -eq "missing") { "DarkGray" } else { "Yellow" }
-        Write-Host ("{0,-10} {1,-18} {2,-12} {3}" -f $action, $probe.Name, $version, $location) -ForegroundColor $color
+        $localizedAction = Get-WinenvLocalizedDisplayValue "action" $action
+        Write-WinenvHost ("{0,-10} {1,-18} {2,-12} {3}" -f $localizedAction, $probe.Name, $version, $location) -ForegroundColor $color
         if ($probe.Status -eq "outdated") {
-            Write-Host "           requires >= $($probe.MinimumVersion)" -ForegroundColor Yellow
+            Write-WinenvHost "           requires >= $($probe.MinimumVersion)" -ForegroundColor Yellow
         }
         if (@($probe.OtherPaths).Count -gt 0) {
-            Write-Host ("           other paths: {0}" -f (@($probe.OtherPaths) -join " | ")) -ForegroundColor Yellow
+            Write-WinenvHost ("           other paths: {0}" -f (@($probe.OtherPaths) -join " | ")) -ForegroundColor Yellow
         }
         if (@($probe.Shadowing).Count -gt 0) {
-            Write-Host ("           same-name aliases/functions ignored: {0}" -f (@($probe.Shadowing) -join " | ")) -ForegroundColor Yellow
+            Write-WinenvHost ("           same-name aliases/functions ignored: {0}" -f (@($probe.Shadowing) -join " | ")) -ForegroundColor Yellow
         }
     }
 
@@ -3174,7 +3398,9 @@ function Test-ProfileHealth {
         foreach ($command in @($package.commands)) {
             $resolved = @(Get-Command $command -All -ErrorAction SilentlyContinue)
             if ($resolved.Count -eq 0) {
-                Write-Host ("{0,-12} missing (owner: {1})" -f $command, $package.owner) -ForegroundColor DarkGray
+                $missing = Get-WinenvLocalizedDisplayValue "status" "missing"
+                $owner = Get-WinenvLocalizedColumnName "owner"
+                Write-WinenvHost ("{0,-12} {1} ({2}: {3})" -f $command, $missing, $owner, $package.owner) -ForegroundColor DarkGray
                 continue
             }
 
@@ -3183,7 +3409,7 @@ function Test-ProfileHealth {
                 "$($_.CommandType):$location"
             } | Select-Object -Unique)
             $color = if ($paths.Count -gt 1) { "Yellow" } else { "Green" }
-            Write-Host ("{0,-12} {1}" -f $command, ($paths -join " | ")) -ForegroundColor $color
+            Write-WinenvHost ("{0,-12} {1}" -f $command, ($paths -join " | ")) -ForegroundColor $color
         }
     }
 
@@ -3204,14 +3430,14 @@ function Update-All {
     $miseCommand = Get-OptionalManagerCommand "mise"
 
     Write-Step "Update scope"
-    Write-Host "WinGet: every installed package with an available update"
-    if ($null -ne $scoopCommand) { Write-Host "Scoop:  Scoop itself, bucket indexes, and every installed app" }
-    else { Write-Host "Scoop:  skipped (not installed)" -ForegroundColor DarkGray }
-    if ($null -ne $miseCommand) { Write-Host "mise:   every active tool from the mise configuration" }
-    else { Write-Host "mise:   skipped (not installed)" -ForegroundColor DarkGray }
+    Write-WinenvHost "WinGet: every installed package with an available update"
+    if ($null -ne $scoopCommand) { Write-WinenvHost "Scoop:  Scoop itself, bucket indexes, and every installed app" }
+    else { Write-WinenvHost "Scoop:  skipped (not installed)" -ForegroundColor DarkGray }
+    if ($null -ne $miseCommand) { Write-WinenvHost "mise:   every active tool from the mise configuration" }
+    else { Write-WinenvHost "mise:   skipped (not installed)" -ForegroundColor DarkGray }
 
     if (-not (Confirm-Operation "Update everything tracked by the installed package managers?")) {
-        Write-Host "Update cancelled."
+        Write-WinenvHost "Update cancelled."
         return
     }
 
@@ -3257,14 +3483,14 @@ function Remove-Package {
             throw "No installed package matched '$query'."
         }
         $selected = @(Select-PackageCandidates $candidates "Remove > " -Multi)
-        if ($selected.Count -eq 0) { Write-Host "No packages selected."; return }
+        if ($selected.Count -eq 0) { Write-WinenvHost "No packages selected."; return }
         $packages = @($selected | ForEach-Object { ConvertTo-PackageDefinition $_ })
     }
 
     Write-Step "Packages selected for removal"
-    $packages | Select-Object owner, displayName, id | Format-Table -AutoSize
+    $packages | Select-Object owner, displayName, id | Format-WinenvTable -AutoSize
     if (-not (Confirm-Operation "Remove these packages using their displayed managers?")) {
-        Write-Host "Removal cancelled."
+        Write-WinenvHost "Removal cancelled."
         return
     }
 
@@ -3292,7 +3518,7 @@ function Remove-Package {
 
 function Invoke-Cleanup {
     if (-not (Confirm-Operation "Remove old Scoop and unused mise versions?")) {
-        Write-Host "Cleanup cancelled."
+        Write-WinenvHost "Cleanup cancelled."
         return
     }
 
@@ -3309,53 +3535,64 @@ function Invoke-Cleanup {
     }
 }
 
-if ($Action -in @("profile", "use")) {
-    Set-UserProfile -Apply:($Action -eq "use")
-    return
-}
-
-if ($Action -eq "unuse") {
-    Disable-UserProfile
-    return
-}
-
-if ($Action -eq "help") {
-    Show-WinenvHelp
-    return
-}
-
-if ($Action -eq "version") {
-    Show-WinenvVersion
-    return
-}
-
-if ($Action -eq "self-update") {
-    Update-WinenvSelf
-    return
-}
-
-if ($Action -eq "bucket") {
-    Invoke-ScoopBucketCommand
-    return
-}
-
-$definition = Read-ProfileDefinition
-
-switch ($Action) {
-    "list" { Show-Profile $definition }
-    "scan" { Show-InstalledInventory $definition }
-    "adopt" { Adopt-InstalledPackages $definition }
-    "store" { Open-PackageStore $definition }
-    "search" { Search-PackageCatalogs $definition }
-    "info" { Show-PackageInfo $definition }
-    "doctor" { Test-ProfileHealth $definition }
-    "install" {
-        Install-SelectedPackages $definition
-        Invoke-Migrations
-        Write-Host "`nInstall completed. Open a new PowerShell window and run 'win check'." -ForegroundColor Green
+try {
+    if ($Action -eq "language") {
+        Set-WinenvLanguage
+        return
     }
-    "update" { Update-All $definition }
-    "remove" { Remove-Package $definition }
-    "cleanup" { Invoke-Cleanup }
-    "migrate" { Invoke-Migrations }
+
+    if ($Action -in @("profile", "use")) {
+        Set-UserProfile -Apply:($Action -eq "use")
+        return
+    }
+
+    if ($Action -eq "unuse") {
+        Disable-UserProfile
+        return
+    }
+
+    if ($Action -eq "help") {
+        Show-WinenvHelp
+        return
+    }
+
+    if ($Action -eq "version") {
+        Show-WinenvVersion
+        return
+    }
+
+    if ($Action -eq "self-update") {
+        Update-WinenvSelf
+        return
+    }
+
+    if ($Action -eq "bucket") {
+        Invoke-ScoopBucketCommand
+        return
+    }
+
+    $definition = Read-ProfileDefinition
+
+    switch ($Action) {
+        "list" { Show-Profile $definition }
+        "scan" { Show-InstalledInventory $definition }
+        "adopt" { Adopt-InstalledPackages $definition }
+        "store" { Open-PackageStore $definition }
+        "search" { Search-PackageCatalogs $definition }
+        "info" { Show-PackageInfo $definition }
+        "doctor" { Test-ProfileHealth $definition }
+        "install" {
+            Install-SelectedPackages $definition
+            Invoke-Migrations
+            Write-WinenvHost "`nInstall completed. Open a new PowerShell window and run 'win check'." -ForegroundColor Green
+        }
+        "update" { Update-All $definition }
+        "remove" { Remove-Package $definition }
+        "cleanup" { Invoke-Cleanup }
+        "migrate" { Invoke-Migrations }
+    }
+} catch {
+    $localizedMessage = ConvertTo-WinenvLocalizedText ([string]$_.Exception.Message)
+    if ($localizedMessage -eq [string]$_.Exception.Message) { throw }
+    throw $localizedMessage
 }

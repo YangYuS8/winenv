@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://yangyus8.top/winenv/
+    about: Read the English guides and command reference before opening an issue.
+  - name: 中文文档
+    url: https://yangyus8.top/winenv/zh/
+    about: 提交 Issue 前请先查看中文指南和命令参考。
+  - name: Private security report
+    url: https://github.com/YangYuS8/winenv/security/advisories/new
+    about: Report vulnerabilities privately; never include them in a public issue.

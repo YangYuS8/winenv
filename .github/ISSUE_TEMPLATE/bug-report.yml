@@ -1,0 +1,85 @@
+name: Bug report / 缺陷报告
+description: Report reproducible Winenv behavior that appears incorrect. / 报告可复现的异常行为。
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Winenv. Search existing issues first. Security vulnerabilities belong in a [private advisory](https://github.com/YangYuS8/winenv/security/advisories/new), not here.
+
+        感谢你帮助改进 Winenv。请先搜索已有 Issue；安全漏洞必须使用[私有漏洞报告](https://github.com/YangYuS8/winenv/security/advisories/new)。
+  - type: input
+    id: version
+    attributes:
+      label: Winenv version / Winenv 版本
+      description: Run `win ver`.
+      placeholder: 0.13.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows and PowerShell / Windows 与 PowerShell
+      description: Include the Windows 11 build and `$PSVersionTable.PSVersion`.
+      placeholder: Windows 11 24H2 build 26100; PowerShell 7.6.0
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Exact command / 完整命令
+      description: Remove credentials, private URLs, and personal paths when necessary.
+      placeholder: win add node -From mise -n
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / 预期行为
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior / 实际行为
+      description: What happened instead? Prefer copyable text over screenshots.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction / 复现步骤
+      description: Provide the smallest reliable sequence, including whether it also happens with `-n`.
+      placeholder: |
+        1. Run ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics / 诊断信息
+      description: Paste sanitized `win check` output and relevant manager versions or logs.
+      render: text
+  - type: dropdown
+    id: language
+    attributes:
+      label: Interface language / 界面语言
+      options:
+        - English (en-US)
+        - Simplified Chinese (zh-CN)
+        - Automatic / 自动
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist / 检查表
+      options:
+        - label: I searched existing issues and removed sensitive data. / 我已搜索已有 Issue 并移除敏感数据。
+          required: true
+        - label: This is not a security vulnerability. / 这不是安全漏洞。
+          required: true

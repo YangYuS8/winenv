@@ -1,0 +1,41 @@
+name: Documentation or translation / 文档或翻译
+description: Report unclear, missing, stale, or inconsistent English/Chinese content. / 报告缺失、过时或不一致的中英文内容。
+title: "[Docs]: "
+labels: [documentation]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Page or message / 页面或消息
+      description: Link the page or paste the exact CLI message and command that produced it.
+    validations:
+      required: true
+  - type: dropdown
+    id: language
+    attributes:
+      label: Language / 语言
+      options:
+        - English
+        - Simplified Chinese / 简体中文
+        - Both / 两者
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 问题
+      description: Explain what is inaccurate, unclear, missing, or inconsistent.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement / 修改建议
+      description: Optional wording, terminology, or structure.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist / 检查表
+      options:
+        - label: I checked the corresponding page or message in the other supported language. / 我已检查另一种受支持语言中的对应页面或消息。
+          required: true

@@ -43,6 +43,9 @@ foreach ($file in @(Get-ChildItem -Path $root -Filter "*.ps1" -File) + @(Get-Chi
     }
 }
 
+& (Join-Path $PSScriptRoot "test-i18n.ps1")
+& (Join-Path $PSScriptRoot "check-i18n-coverage.ps1")
+
 Write-Host "Exercising command routes..."
 $testLocalAppData = Join-Path ([IO.Path]::GetTempPath()) ("winenv-tests-" + [Guid]::NewGuid().ToString("N"))
 $env:LOCALAPPDATA = $testLocalAppData
@@ -241,6 +244,10 @@ if ($runtimeList -notmatch "PowerShell 7" -or $runtimeList -notmatch "junegunn.f
 $runtimeInstall = (& (Join-Path $root "win.ps1") install -DryRun 6>&1 | Out-String -Width 4096)
 if ($runtimeInstall -notmatch "Runtime requirements" -or $runtimeInstall -notmatch "PowerShell 7" -or $runtimeInstall -notmatch "fzf" -or $runtimeInstall -match "Microsoft.VisualStudioCode") {
     throw "The default install route did not probe only Winenv runtime dependencies."
+}
+$localizedRuntimeInstall = (& (Join-Path $root "win.ps1") install -DryRun -Language zh 6>&1 | Out-String -Width 4096)
+if ($localizedRuntimeInstall -notmatch "运行要求" -or $localizedRuntimeInstall -notmatch "操作\s+要求" -or $localizedRuntimeInstall -notmatch "复用" -or $localizedRuntimeInstall -match "Runtime requirements") {
+    throw "The runtime plan was not fully localized into Simplified Chinese."
 }
 & (Join-Path $root "win.ps1") use
 $helpText = (& (Join-Path $root "win.ps1") help 6>&1 | Out-String -Width 4096)

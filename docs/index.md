@@ -3,59 +3,59 @@ layout: home
 
 hero:
   name: Winenv
-  text: 把 Windows 软件管理变简单
-  tagline: 用一套短命令组织 WinGet、Scoop 与 mise。实时搜索、组合 Profile，也能无缝接入已经使用很久的电脑。
+  text: Make Windows software manageable
+  tagline: One compact interface for WinGet, Scoop, and mise. Search live catalogs, compose profiles, and bring an existing PC under control without starting over.
   image:
     src: /logo.svg
     alt: Winenv
   actions:
     - theme: brand
-      text: 开始使用
+      text: Get started
       link: /guide/getting-started
     - theme: alt
-      text: 命令速查
+      text: Command reference
       link: /reference/commands
 
 features:
   - icon: 🔎
-    title: 查询真实目录
-    details: 搜索时实时聚合 WinGet、Scoop 和 mise，同名来源全部展示，不维护容易过期的索引。
+    title: Search real catalogs
+    details: Query WinGet, Scoop, and mise at runtime. Every matching source stays visible, with no hand-maintained package index to become stale.
   - icon: 🧩
-    title: Profile 自由组合
-    details: 运行依赖、个人基线和社区配置彼此独立；重复声明会合并，真正冲突时才让你选择。
+    title: Compose profiles
+    details: Runtime requirements, personal baselines, and community profiles remain independent. Identical claims merge; real conflicts ask for a decision.
   - icon: ♻️
-    title: 尊重现有系统
-    details: 扫描已经安装的软件，能复现的按需纳入，不能匹配的保持原样，不要求为了管理工具重装电脑。
+    title: Respect the current PC
+    details: Scan software already installed, adopt only reproducible entries, and leave unknown local applications untouched. Reinstallation is never a prerequisite.
   - icon: ⚡
-    title: 日常命令够短
-    details: 用 win、win up、win rm、win check 完成常见操作，完整动作名仍兼容自动化脚本。
+    title: Keep daily commands short
+    details: Use win, win up, win rm, and win check for common work. Long action names remain available for existing automation.
   - icon: 🛡️
-    title: 信任边界明确
-    details: 第三方源、裸安装器和本地 manifest 都先展示来源与校验信息，不静默提权或修改安全策略。
+    title: Make trust boundaries visible
+    details: Third-party sources, raw installers, and local manifests show their origin and verification data before anything runs.
   - icon: 🚀
-    title: 发布完全自动化
-    details: 提交记录自动生成版本、更新日志、校验过的 Release 资产和这座文档站。
+    title: Automate the maintenance work
+    details: Commit history produces versions, release notes, verified assets, and this documentation site through GitHub Actions.
 ---
 
-## 三个管理器，一套边界
+## Three managers, one clear policy
 
-Winenv 借鉴的是 Omarchy 对工具职责的规划方式，而不是照搬 Linux 的软件栈：
+Winenv borrows Omarchy's idea of assigning each tool a clear responsibility without copying a Linux software stack onto Windows:
 
-| 需求 | 默认交给 | 典型软件 |
+| Need | Default manager | Typical software |
 | --- | --- | --- |
-| Windows 安装器、服务、文件关联或系统集成 | WinGet | 浏览器、编辑器、桌面应用 |
-| 用户级、便携的命令行工具 | Scoop | 小型 CLI、单文件工具 |
-| 项目间需要切换版本的开发工具 | mise | Node.js、Go、Python |
+| Installer, service, file association, or Windows integration | WinGet | Browsers, editors, desktop apps |
+| Portable, user-scoped command-line tool | Scoop | Small CLIs and single-file tools |
+| Development runtime that must switch versions between projects | mise | Node.js, Go, Python |
 
-这只是默认判断顺序。最终选择始终来自当前软件目录和你的确认，而不是一张需要专人维护的映射表。
+This is a decision order, not a hard-coded catalog. The final choice comes from the catalogs available on your machine and your confirmation.
 
 ```powershell
-# 打开终端里的软件选择器
+# Open the terminal software picker
 win
 
-# 带关键词打开，并明确选择来源
+# Start with a query or constrain the manager
 win vscode
 win node -From mise
 ```
 
-[了解软件搜索与归属方式 →](/guide/packages)
+[Learn how search and package ownership work →](/guide/packages)

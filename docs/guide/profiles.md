@@ -1,32 +1,32 @@
-# 组合 Profile
+# Composing profiles
 
-Profile 是“希望这台电脑具备什么”的声明，不是另一套包数据库。实际安装、升级和卸载仍由 WinGet、Scoop 或 mise 完成。
+A profile declares what the machine should provide; it is not another package database. WinGet, Scoop, and mise still perform installation, updates, and removal.
 
-## 内置运行层
+## Built-in runtime layer
 
-仓库中的 `profile.json` 只保存 Winenv 正常运行所需的能力：
+The repository's `profile.json` contains only capabilities required to run Winenv:
 
-- PowerShell 7：稳定执行命令和详情预览；
-- fzf：交互搜索、选择与卸载界面。
+- PowerShell 7 for stable execution and detail previews;
+- fzf for interactive search, selection, and removal.
 
-这两项不是所有权声明。机器上已有的兼容版本会被直接复用，Winenv 不会因为它出现在运行层就改变原本的更新方式。
+These declarations do not seize ownership. Compatible installations already present on the machine are reused and keep their original update path.
 
-维护者的个人软件不会放进开源仓库或 Release。
+The maintainer's personal software is not included in the repository or releases.
 
-## 使用自己的或社区的 Profile
+## Use personal or community profiles
 
-用户 Profile 使用与 `profile.json` 相同的 schema，可以留在本地，也可以通过 GitHub、Gist 或自己的站点分享：
+User profiles follow the same schema as `profile.json`. Keep one locally or share it through GitHub, a Gist, or another site:
 
 ```powershell
 win use C:\Users\me\my-winenv.json
 win use https://raw.githubusercontent.com/user/dotfiles/main/winenv.json
 ```
 
-`win use` 会校验文件、保存独立快照、展示所有启用 Profile 合成后的计划，然后请求确认。它不会覆盖其他 Profile。
+`win use` validates the file, saves an independent snapshot, shows the plan produced by all active profiles, and asks for confirmation. It never overwrites another profile.
 
-同一来源再次导入只刷新自己的快照，不产生重复层。远程 Profile 只接受 HTTPS，并且不会在 `win up` 时悄悄更新；想采用上游新内容时，需要再次执行原来的 `win use <url>`。
+Importing the same source again refreshes only its snapshot. Remote profiles require HTTPS and never update silently during `win up`; run the original `win use <url>` again when you want upstream changes.
 
-## 最小示例
+## Minimal example
 
 ```json
 {
@@ -58,58 +58,58 @@ win use https://raw.githubusercontent.com/user/dotfiles/main/winenv.json
 }
 ```
 
-完整字段约束以仓库中的 [`profile.schema.json`](https://github.com/YangYuS8/winenv/blob/main/profile.schema.json) 为准。
+See [`profile.schema.json`](https://github.com/YangYuS8/winenv/blob/main/profile.schema.json) for the complete constraints.
 
-## 合并与冲突
+## Merge and conflict rules
 
-Winenv 先合成全部启用层，再执行安装：
+Winenv composes all active layers before it installs anything:
 
-- 管理器、来源、包 ID 和版本相同的声明只安装一次，同时保留所有 Profile 的引用；
-- 同一个包要求不同版本，或不同包声明同一个命令时，必须在本机明确选择；
-- `-y` 与 `-n` 遇到未解决冲突会停止，不按导入顺序猜测；
-- 内置运行层始终保留，社区配置不能破坏 Winenv 依赖的 PowerShell 与 fzf。
+- identical manager, source, package ID, and version claims install once while retaining every profile reference;
+- different versions of one package, or different packages claiming one command, require an explicit local choice;
+- `-y` and `-n` stop on an unresolved conflict rather than treating import order as priority;
+- the runtime layer always remains, so a community profile cannot remove Winenv's PowerShell and fzf requirements.
 
-本机冲突选择保存在 `%LOCALAPPDATA%\Winenv\config.json`，不会被写回别人的 Profile。
+Local conflict decisions live in `%LOCALAPPDATA%\Winenv\config.json`; they are never written back into someone else's profile.
 
-## 查看与重新启用
+## Inspect and re-enable
 
 ```powershell
-win use                 # 列出已登记 Profile
-win ls                  # 查看 Profile 和最终有效软件
-win use shared-tools    # 从本机快照重新启用
+win use                 # list registered profiles
+win ls                  # show profiles, packages, and claims
+win use shared-tools    # re-enable a retained local snapshot
 ```
 
-只有传入文件或 HTTPS URL 才会刷新快照。多个 Profile 同名时，使用 `win ls` 显示的 ID 精确指定。
+Only a file or HTTPS URL refreshes a snapshot. If names collide, use the ID shown by `win ls`.
 
-## 停用与软件归属
+## Disabling and software ownership
 
 ```powershell
 win off shared-tools
 win off shared-tools-e06532a770
 ```
 
-停用只撤销这个 Profile 的声明并重新计算引用：
+Disabling removes only that profile's claims and recalculates references:
 
-- 仍被其他 Profile 声明的软件继续显示为受引用；
-- 不再被任何 Profile 声明的软件标记为 `unclaimed`；
-- 软件本体和 Profile 快照都保留，不自动卸载。
+- packages still claimed elsewhere remain referenced;
+- packages with no remaining claim become `unclaimed`;
+- installed software and the profile snapshot are retained.
 
-软件始终归实际管理器维护。确认不再需要后，显式执行 `win rm <软件>`。`win clean` 也不会把 `unclaimed` 软件当作垃圾删除。
+The actual manager continues to own the software. Remove an unwanted package explicitly with `win rm <software>`. `win clean` does not treat unclaimed packages as garbage.
 
-## mise 配置边界
+## mise configuration boundary
 
-启用 Profile 中的 mise 工具会生成：
+Active profile tools generate an isolated fragment:
 
 ```text
 %USERPROFILE%\.config\mise\conf.d\winenv.toml
 ```
 
-Winenv 不修改个人的全局 `config.toml`。停用 Profile 时只重算自己的片段，因此项目级和个人全局 mise 配置保持独立。
+Winenv does not edit your global `config.toml`. Disabling a profile recalculates only this fragment, leaving project and personal global configuration independent.
 
-可以临时只应用某些分组：
+Apply selected groups temporarily with:
 
 ```powershell
 win add -P base,desktop,development
 ```
 
-`-P` 是 `-Profiles` 的短写，只从当前有效的运行层和用户层选择分组，不改变已启用 Profile。
+`-P` is short for `-Profiles`. It selects groups from the current runtime and user layers without changing which profiles are active.

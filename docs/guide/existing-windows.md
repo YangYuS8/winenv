@@ -1,60 +1,58 @@
-# 接入现有 Windows
+# Adopting an existing Windows installation
 
-不需要重装系统，也不需要让 Winenv 把现有软件重新安装一遍。
+You do not need to reinstall Windows or let Winenv reinstall the software already on the machine.
 
-## 先做只读扫描
-
-安装 Winenv 后执行：
+## Start with a read-only scan
 
 ```powershell
 win scan
-win scan powertoys       # 按关键词过滤
-win scan -From winget    # 按管理器过滤
+win scan powertoys       # filter by keyword
+win scan -From winget    # filter by manager
 ```
 
-扫描不会安装、升级、卸载或写入 Profile。结果分为三类：
+Scanning does not install, update, remove, or write to a profile. Results use three states:
 
-| 状态 | 含义 |
+| State | Meaning |
 | --- | --- |
-| `managed` | 已经被某个启用的 Winenv Profile 声明 |
-| `adoptable` | 当前安装能映射到 WinGet 软件源、Scoop bucket 或 mise 工具，可在另一台机器复现 |
-| `local` | Windows 知道它已安装，但当前目录无法可靠映射，例如部分 OEM 工具和手工安装软件 |
+| `managed` | Claimed by an active Winenv profile |
+| `adoptable` | The installation maps to a current WinGet source, Scoop bucket, or mise tool and can be reproduced elsewhere |
+| `local` | Windows knows it is installed, but no configured catalog can map it reliably—for example, some OEM tools and manually installed applications |
 
-`winget list` 能列出由 WinGet 和其他方式安装的应用。因此结果中的 `winget` 表示“当前能由这个目录复现”，不代表 Winenv 声称软件最初由 WinGet 安装。
+`winget list` can report applications installed both by WinGet and by other methods. A `winget` source in the scan means the current catalog can reproduce the app; it does not claim WinGet originally installed it.
 
-## 选择性纳入基线
+## Adopt selected software
 
 ```powershell
 win adopt
 win adopt powertoys
 win adopt -From scoop
-win adopt -n             # 选择并预览，不写入
+win adopt -n             # select and preview without writing
 ```
 
-`adopt` 只允许选择 `adoptable` 项，并把选择合并到：
+`adopt` accepts only `adoptable` entries and merges the selection into:
 
 ```text
 %LOCALAPPDATA%\Winenv\profiles\adopted.json
 ```
 
-这个过程不会重新安装、升级或卸载软件。重复执行只合并新选择；mise 会保留当前声明的版本，Scoop 会尽量记录自定义 bucket 的 HTTPS 来源。
+Nothing is reinstalled, updated, or removed. Repeating the command merges new selections. mise keeps the currently declared version, and Scoop records the HTTPS origin of a custom bucket when it can resolve one.
 
-Winenv 无法可靠猜测每个包提供的命令，因此自动生成项的 `commands` 会留空。准备长期分享时，可以复制这份 JSON，补充名称、分组与命令，再用 `win use <文件>` 导入正式 Profile。
+Winenv cannot reliably infer every command exposed by an installed package, so generated entries leave `commands` empty. Before sharing a durable profile, copy the JSON, improve its name, groups, and command declarations, then import it with `win use <file>`.
 
-## 无法映射的软件
+## Software that cannot be mapped
 
-`local` 项不会被强行写进“可复现”清单：
+`local` entries are not forced into a supposedly reproducible manifest:
 
-- 若它登记在 Windows“已安装的应用”中，通常仍可通过 `win rm` 查找和卸载；
-- 若以后能与 WinGet 公共目录匹配，便可由 WinGet 接管更新；
-- 否则继续使用软件自身更新器，或重新运行新版安装器。
+- if Windows records the application under Installed apps, `win rm` can usually find and remove it;
+- if a future WinGet catalog entry matches, WinGet can then take responsibility for updates;
+- otherwise, continue using the vendor updater or a newer installer.
 
-这样可以接管能可靠描述的部分，同时不为未知软件编造升级和卸载规则。
+This lets Winenv control what it can describe faithfully without inventing update and uninstall rules for unknown software.
 
-## 停用自动生成的 Profile
+## Disable the generated profile
 
 ```powershell
 win off adopted
 ```
 
-软件和快照都会保留，只撤销这层声明。以后再次运行 `win adopt` 时，Winenv 会先提示并重新启用完整快照。
+The software and snapshot remain. Only this layer's claims are disabled. A later `win adopt` warns before re-enabling the complete retained snapshot.

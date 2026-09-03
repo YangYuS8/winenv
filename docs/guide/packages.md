@@ -1,90 +1,88 @@
-# 查找与管理软件
+# Finding and managing software
 
-Winenv 不维护自己的软件索引。每次搜索都查询当前可用的 WinGet、Scoop 和 mise 目录，再把结果整理成统一界面。
+Winenv does not maintain its own package index. Every search queries the WinGet, Scoop, and mise catalogs currently available on the machine and presents their results through one interface.
 
-## 终端软件选择器
+## Terminal software picker
 
 ```powershell
-win                 # 浏览和筛选
-win powertoys       # 带关键词打开
+win                 # browse and filter
+win powertoys       # start with a query
 win vscode -From winget
 ```
 
-选择器由 fzf 提供：
+The picker is powered by fzf:
 
-- 输入文字进行模糊筛选；
-- `Tab` 多选，`Enter` 安装，`Esc` 取消；
-- `Alt-P` 切换详情预览；
-- `Alt-J` / `Alt-K` 滚动预览。
+- type to fuzzy-filter results;
+- press `Tab` to select multiple entries, `Enter` to install, or `Esc` to cancel;
+- press `Alt-P` to toggle the detail preview;
+- use `Alt-J` and `Alt-K` to scroll the preview.
 
-每一行都显示管理器、仓库来源、名称、ID 和版本。同一个软件同时存在于多个目录时会保留为多条独立选项，Winenv 不会静默替你决定。
+Each row includes manager, catalog source, name, ID, and version. If the same application exists in more than one catalog, each source remains a separate choice. Winenv does not silently pick one.
 
-只需要可复制的文本结果时：
+For copyable text output instead:
 
 ```powershell
 win find powertoys
 win find node -From mise
 ```
 
-## 安装与复用
+## Install or reuse
 
 ```powershell
-win add                 # 应用所有启用 Profile
-win add vscode          # 安装一个已知软件
+win add                 # apply all active profiles
+win add vscode          # install one known package
 win add scoop:extras/powertoys
 win add mise:node
 ```
 
-清单外的搜索结果会带有管理器与来源令牌，可直接交给 `win add`。只有希望在下一台电脑自动复现的软件，才需要加入自己的 Profile。
+Search results outside a profile include a manager-and-source token that can be passed directly to `win add`. Add software to a personal profile only when it should be reproduced on another machine.
 
-安装前 Winenv 会读取各管理器当前的真实库存。包和版本已经满足时显示 `reuse` 并原地复用，不重复安装。
+Before installation, Winenv reads each manager's current inventory. If a matching package and version already satisfy the request, the plan reports `reuse` and leaves the installation in place.
 
-## 默认归属策略
+## Default ownership policy
 
-决定自己的长期基线时，依次问：
+Use this decision order when building a durable baseline:
 
-1. 是否需要针对不同项目切换版本？是则用 mise。
-2. 是否只是解压即可使用的用户级 CLI？是则用 Scoop。
-3. 是否需要安装器、服务、注册表、文件关联或系统集成？是则用 WinGet。
-4. 三者都不合适时，再作为手工安装例外处理。
+1. Must versions change between projects? Use mise.
+2. Is it a portable, user-scoped CLI? Use Scoop.
+3. Does it need an installer, service, registry entry, file association, or other Windows integration? Use WinGet.
+4. If none fit, treat it as an explicit manual-installation exception.
 
-这套规则只帮助个人做出一致选择。搜索结果仍展示所有真实来源。
+These rules keep your own choices consistent. Search still shows every real source.
 
-## 更新
+## Update
 
 ```powershell
 win up
 ```
 
-它会先更新 Winenv，再依次更新 WinGet、Scoop 和 mise 当前登记的软件，因此也涵盖不在 Profile 中的包。WinGet pin、Scoop hold 与 mise 配置仍由各管理器自己解释。
+This updates Winenv first, then asks WinGet, Scoop, and mise to update everything they currently track—including packages outside profiles. WinGet pins, Scoop holds, and mise configuration remain authoritative within their managers.
 
-默认会先展示范围并确认；自动化中可以使用 `win up -y`。
+The command shows its scope and asks for confirmation. Automation can use `win up -y`.
 
-## 卸载
+## Remove
 
 ```powershell
-win rm                 # 交互选择已安装软件
-win rm powertoys       # 按关键词缩小范围
+win rm                 # select from installed software
+win rm powertoys       # narrow the selection
 ```
 
-实际卸载仍由登记该软件的 WinGet、Scoop 或 mise 执行。停用 Profile 不等于卸载，详见 [Profile 的引用关系](./profiles#停用与软件归属)。
+The manager that records the application performs the removal. Disabling a profile does not uninstall its software; see [Disabling and ownership](./profiles#disabling-and-software-ownership).
 
-## 清理旧版本
+## Clean old versions
 
 ```powershell
 win clean
 ```
 
-`win clean` 会清理 Scoop 旧版本和缓存，并要求 mise 清理不再被任何 mise 配置引用的工具版本。需要保留的旧版本应在全局或项目 mise 配置中明确指定。
+This clears old Scoop versions and cache, then asks mise to prune tool versions no longer referenced by any mise configuration. Pin a required old version in global or project mise configuration before cleaning.
 
-## 预览与自动确认
-
-常用短参数：
+## Preview and confirmation
 
 ```powershell
-win add node -From mise   # 限定管理器
-win up -n                 # dry-run，只预览
-win up -y                 # 自动确认普通操作
+win add node -From mise   # constrain the manager
+win up -n                 # dry run
+win up -y                 # confirm ordinary operations
 ```
 
-第三方源和无法验证的安装器属于新的信任决定，不会被 `-y` 静默接受。
+Third-party sources and unverifiable installers introduce a new trust decision. `-y` never accepts that decision silently.

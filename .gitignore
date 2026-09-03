@@ -9,6 +9,7 @@ node_modules/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
 docs/changelog.md
+docs/zh/changelog.md
 
 # Windows artifacts
 Thumbs.db
