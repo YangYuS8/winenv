@@ -1,16 +1,19 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("list", "ls", "use", "unuse", "profile", "store", "browse", "search", "find", "info", "show", "doctor", "check", "install", "add", "update", "up", "remove", "rm", "cleanup", "clean", "migrate", "version", "self-update", "selfup")]
-    [string]$Action = "list",
+    [string]$Action = "",
 
+    [Alias("P")]
     [string[]]$Profiles,
     [Parameter(Position = 1)]
     [Alias("PackageKey", "Query")]
     [string]$Target,
+    [Alias("From")]
     [ValidateSet("all", "managed", "winget", "scoop", "mise")]
     [string]$Manager = "all",
+    [Alias("n")]
     [switch]$DryRun,
+    [Alias("y")]
     [switch]$Yes
 )
 
@@ -25,6 +28,7 @@ $LocalUserProfilePath = Join-Path $StateRoot "user-profile.json"
 $AllowedOwners = @("winget", "scoop", "mise", "vendor")
 $ActionAliases = @{
     "ls" = "list"
+    "off" = "unuse"
     "browse" = "store"
     "find" = "search"
     "show" = "info"
@@ -33,11 +37,25 @@ $ActionAliases = @{
     "up" = "update"
     "rm" = "remove"
     "clean" = "cleanup"
+    "ver" = "version"
+    "self" = "self-update"
     "selfup" = "self-update"
 }
+$CanonicalActions = @(
+    "help", "list", "use", "unuse", "profile", "store", "search", "info", "doctor",
+    "install", "update", "remove", "cleanup", "migrate", "version", "self-update"
+)
 
-if ($ActionAliases.ContainsKey($Action)) {
+if ([string]::IsNullOrWhiteSpace($Action)) {
+    $Action = "store"
+} elseif ($ActionAliases.ContainsKey($Action)) {
     $Action = $ActionAliases[$Action]
+} elseif ($CanonicalActions -notcontains $Action) {
+    if (-not [string]::IsNullOrWhiteSpace($Target)) {
+        throw "Use quotes around a multi-word search, for example: win 'Visual Studio Code'"
+    }
+    $Target = $Action
+    $Action = "store"
 }
 
 function Write-Step {
@@ -60,6 +78,28 @@ function Show-WinenvVersion {
     } else {
         Write-Output "development"
     }
+}
+
+function Show-WinenvHelp {
+    Write-Host @"
+Winenv keeps Windows software simple.
+
+  win [software]       Search, select, and install
+  win add [software]   Apply the profile, or install one known package
+  win rm [software]    Select and remove installed software
+  win up               Update Winenv and all managed software
+  win use <file|url>   Activate and install a user profile
+  win off              Disable the user profile without uninstalling
+  win ls               Show the active profile
+  win find <software>  Print search results without opening the picker
+  win show <software>  Show package ownership and details
+  win check            Check managers and command conflicts
+  win clean            Remove unused package versions
+  win ver              Print the Winenv version
+  win help             Show this help
+
+Useful shortcuts: -From winget|scoop|mise, -n (dry run), -y (confirm).
+"@
 }
 
 function Update-WinenvSelf {
@@ -183,7 +223,7 @@ function Resolve-ActiveUserProfilePath {
     param([string]$Selection)
     if ([string]::IsNullOrWhiteSpace($Selection)) { return $null }
     if ($Selection -eq "@local") { return $LocalUserProfilePath }
-    throw "Unsupported user profile selection in $ConfigPath. Run 'win unuse' to reset it."
+    throw "Unsupported user profile selection in $ConfigPath. Run 'win off' to reset it."
 }
 
 function Merge-ProfileDefinitions {
@@ -215,9 +255,9 @@ function Show-UserProfileStatus {
     Write-Host "Runtime profile: $ProfilePath"
     Write-Host "User profile:    $selection"
     if (Test-Path $LocalUserProfilePath) {
-        Write-Host "Private copy:    $LocalUserProfilePath"
+        Write-Host "Local snapshot:  $LocalUserProfilePath"
     }
-    Write-Host "`nUse 'win use <json-path-or-https-url>' to apply one, or 'win unuse' to disable it." -ForegroundColor DarkGray
+    Write-Host "`nUse 'win use <json-path-or-https-url>' to apply one, or 'win off' to disable it." -ForegroundColor DarkGray
 }
 
 function Set-UserProfile {
@@ -276,7 +316,7 @@ function Disable-UserProfile {
     param([switch]$AllowAliasTarget)
 
     if (-not $AllowAliasTarget -and -not [string]::IsNullOrWhiteSpace($Target)) {
-        throw "unuse does not accept a target. Run 'win unuse'."
+        throw "off does not accept a target. Run 'win off'."
     }
     Write-WinenvConfig ""
     if ($DryRun) {
@@ -623,7 +663,7 @@ function Search-PackageCatalogs {
 function Show-PackageInfo {
     param($Definition)
     if ([string]::IsNullOrWhiteSpace($Target)) {
-        throw "info requires a profile key or manager token. Example: win info winget:winget/Microsoft.PowerToys"
+        throw "show requires a profile key or manager token. Example: win show winget:winget/Microsoft.PowerToys"
     }
 
     $package = Resolve-PackageReference $Definition $Target
@@ -677,7 +717,7 @@ function Select-PackageCandidates {
     $rows = @($Candidates | ForEach-Object {
         @([string]$_.Token, [string]$_.Manager, [string]$_.Source, [string]$_.Name, [string]$_.Id, [string]$_.Version, [string]$_.ManagedKey) -join "`t"
     })
-    $previewCommand = "pwsh -NoLogo -NoProfile -File `"$PSCommandPath`" info {1}"
+    $previewCommand = "pwsh -NoLogo -NoProfile -File `"$PSCommandPath`" show {1}"
     $fzfArguments = @(
         "--delimiter", "`t", "--with-nth", "2,3,4,5,6,7",
         "--header", "Manager | Source | Name | ID | Version | Baseline   (Alt-P: details, Esc: cancel)",
@@ -703,8 +743,11 @@ function Open-PackageStore {
         [string]$Query = $Target
     )
     if ([string]::IsNullOrWhiteSpace($Query) -and $Manager -ne "managed") {
-        if ($DryRun) { throw "store requires a search query in dry-run mode. Example: win store powertoys -DryRun" }
         $Query = Read-Host "Search WinGet, Scoop, and mise"
+        if ([string]::IsNullOrWhiteSpace($Query)) {
+            Write-Host "No search entered."
+            return
+        }
     }
     $candidates = @(Get-CatalogCandidates $Definition $Query)
     if ($candidates.Count -eq 0) {
@@ -1002,7 +1045,7 @@ function Install-SelectedPackages {
 
     $candidates = @(Get-CatalogCandidates $Definition $Target)
     if ($candidates.Count -eq 0) {
-        throw "No package matched '$Target'. Try 'win search $Target' or use a manager token."
+        throw "No package matched '$Target'. Try 'win find $Target' or use a manager token."
     }
     $selected = @(Select-PackageCandidates $candidates "Install > " -Multi)
     if ($selected.Count -eq 0) {
@@ -1215,6 +1258,21 @@ if ($Action -eq "unuse") {
     return
 }
 
+if ($Action -eq "help") {
+    Show-WinenvHelp
+    return
+}
+
+if ($Action -eq "version") {
+    Show-WinenvVersion
+    return
+}
+
+if ($Action -eq "self-update") {
+    Update-WinenvSelf
+    return
+}
+
 $definition = Read-ProfileDefinition
 Assert-ProfileDefinition $definition
 
@@ -1227,11 +1285,9 @@ switch ($Action) {
     "install" {
         Install-SelectedPackages $definition
         Invoke-Migrations
-        Write-Host "`nInstall completed. Open a new PowerShell window and run 'win doctor'." -ForegroundColor Green
+        Write-Host "`nInstall completed. Open a new PowerShell window and run 'win check'." -ForegroundColor Green
     }
     "update" { Update-All $definition }
-    "version" { Show-WinenvVersion }
-    "self-update" { Update-WinenvSelf }
     "remove" { Remove-Package $definition }
     "cleanup" { Invoke-Cleanup }
     "migrate" { Invoke-Migrations }

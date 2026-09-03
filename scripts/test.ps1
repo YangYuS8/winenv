@@ -119,6 +119,11 @@ function global:Invoke-WebRequest {
     }
     return [pscustomobject]@{ Content = Get-Content -Raw -Path $testUserProfilePath }
 }
+function global:Read-Host {
+    param([string]$Prompt)
+    if ($Prompt -eq "Search WinGet, Scoop, and mise") { return "powertoys" }
+    throw "Unexpected interactive prompt: $Prompt"
+}
 
 $runtimeList = (& (Join-Path $root "win.ps1") list | Out-String -Width 4096)
 if ($runtimeList -notmatch "PowerShell 7" -or $runtimeList -notmatch "junegunn.fzf" -or $runtimeList -match "Node.js") {
@@ -129,6 +134,10 @@ if ($runtimeInstall -notmatch "Microsoft.PowerShell" -or $runtimeInstall -notmat
     throw "The default install route is not limited to Winenv runtime dependencies."
 }
 & (Join-Path $root "win.ps1") use
+$helpText = (& (Join-Path $root "win.ps1") help 6>&1 | Out-String -Width 4096)
+if ($helpText -notmatch "win \[software\]" -or $helpText -notmatch "win off" -or $helpText -notmatch "-From") {
+    throw "The compact help does not describe the primary command interface."
+}
 $remoteUsePlan = (& (Join-Path $root "win.ps1") use "https://profiles.example/test.json" -DryRun -Yes 6>&1 | Out-String -Width 4096)
 if ($remoteUsePlan -notmatch "Profile preview" -or $remoteUsePlan -notmatch "Microsoft.VisualStudioCode" -or $remoteUsePlan -notmatch "scoop install main/ripgrep" -or $remoteUsePlan -notmatch "mise use --global node@26") {
     throw "The shared-profile use route did not preview and plan the complete installation."
@@ -138,13 +147,14 @@ $personalList = (& (Join-Path $root "win.ps1") list 6>&1 | Out-String -Width 409
 if ($personalList -notmatch "test-user" -or $personalList -notmatch "Visual Studio Code" -or $personalList -notmatch "Node.js") {
     throw "The selected user profile was not layered over the runtime profile."
 }
-& (Join-Path $root "win.ps1") store powertoys -DryRun
+& (Join-Path $root "win.ps1") -n
+& (Join-Path $root "win.ps1") powertoys -n
 if (@($global:WinenvFzfRows | Where-Object { $_ -match "^scoop:extras/powertoys`t" }).Count -ne 1) {
     throw "The live store did not keep the Scoop alternative separate from WinGet."
 }
-& (Join-Path $root "win.ps1") info vscode -DryRun
-& (Join-Path $root "win.ps1") info "winget:winget/Microsoft.PowerToys" -DryRun
-$managedSearch = (& (Join-Path $root "win.ps1") search ripgrep -Manager managed | Out-String -Width 4096)
+& (Join-Path $root "win.ps1") show vscode -n
+& (Join-Path $root "win.ps1") show "winget:winget/Microsoft.PowerToys" -n
+$managedSearch = (& (Join-Path $root "win.ps1") find ripgrep -From managed | Out-String -Width 4096)
 if ($managedSearch -notmatch "ripgrep" -or $managedSearch -notmatch "win add ripgrep") {
     throw "The baseline search did not preserve its configured install command."
 }
@@ -152,27 +162,27 @@ $liveSearch = (& (Join-Path $root "win.ps1") search powertoys | Out-String -Widt
 if ($liveSearch -notmatch "Microsoft\.PowerToys" -or $liveSearch -notmatch "powertoys" -or $liveSearch -notmatch "winget" -or $liveSearch -notmatch "scoop") {
     throw "The unified search did not return both live manager results."
 }
-$miseSearch = (& (Join-Path $root "win.ps1") search node -Manager mise | Out-String -Width 4096)
+$miseSearch = (& (Join-Path $root "win.ps1") find node -From mise | Out-String -Width 4096)
 if ($miseSearch -notmatch "core:node" -or $miseSearch -notmatch "win add node") {
     throw "The mise result did not merge live registry data with the baseline override."
 }
-& (Join-Path $root "win.ps1") doctor
-$reportedVersion = & (Join-Path $root "win.ps1") version
+& (Join-Path $root "win.ps1") check
+$reportedVersion = & (Join-Path $root "win.ps1") ver
 if ([string]::IsNullOrWhiteSpace([string]$reportedVersion)) {
     throw "The version command returned no version."
 }
-& (Join-Path $root "win.ps1") install -DryRun
-& (Join-Path $root "win.ps1") install vscode -DryRun
-& (Join-Path $root "win.ps1") install "scoop:extras/powertoys" -DryRun
-& (Join-Path $root "win.ps1") install powertoys -DryRun
-$updatePlan = (& (Join-Path $root "win.ps1") update -DryRun 6>&1 | Out-String -Width 4096)
+& (Join-Path $root "win.ps1") add -n
+& (Join-Path $root "win.ps1") add vscode -n
+& (Join-Path $root "win.ps1") add "scoop:extras/powertoys" -n
+& (Join-Path $root "win.ps1") add powertoys -n
+$updatePlan = (& (Join-Path $root "win.ps1") up -n 6>&1 | Out-String -Width 4096)
 if ($updatePlan -notmatch "winget upgrade --all" -or $updatePlan -notmatch "scoop update \*" -or $updatePlan -notmatch "mise up") {
     throw "The update route did not delegate the full inventory to each package manager."
 }
-& (Join-Path $root "win.ps1") remove vscode -DryRun
-& (Join-Path $root "win.ps1") remove powertoys -DryRun
-& (Join-Path $root "win.ps1") cleanup -DryRun
-& (Join-Path $root "win.ps1") unuse
+& (Join-Path $root "win.ps1") rm vscode -n
+& (Join-Path $root "win.ps1") rm powertoys -n
+& (Join-Path $root "win.ps1") clean -n
+& (Join-Path $root "win.ps1") off
 $resetList = (& (Join-Path $root "win.ps1") list | Out-String -Width 4096)
 if ($resetList -match "Visual Studio Code") {
     throw "Disabling the user profile did not restore the runtime-only profile."

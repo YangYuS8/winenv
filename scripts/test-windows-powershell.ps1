@@ -16,8 +16,9 @@ function global:scoop {}
 function global:mise {}
 
 & (Join-Path $root "win.ps1") list | Out-Null
-& (Join-Path $root "win.ps1") unuse -DryRun | Out-Null
-& (Join-Path $root "win.ps1") search fzf -Manager managed | Out-Null
-& (Join-Path $root "win.ps1") install powershell -DryRun | Out-Null
+& (Join-Path $root "win.ps1") help | Out-Null
+& (Join-Path $root "win.ps1") off -n | Out-Null
+& (Join-Path $root "win.ps1") find fzf -From managed | Out-Null
+& (Join-Path $root "win.ps1") add powershell -n | Out-Null
 
 Write-Host "Windows PowerShell compatibility checks passed." -ForegroundColor Green

@@ -14,7 +14,7 @@ Winenv 自己不建立第四套软件仓库：
 - 更新和卸载读取各管理器当前的真实状态；
 - 内置 `profile.json` 只保存 Winenv 正常运行所需的软件；个人选择放在独立用户 profile 中。
 
-用户可以在自己的私有 profile 中采用类似 Omarchy 的默认归属策略：
+用户可以在自己的 profile 中采用类似 Omarchy 的默认归属策略：
 
 - 普通 Windows 应用交给 WinGet；
 - 便携命令行工具交给 Scoop；
@@ -60,70 +60,51 @@ irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1 | iex
 ## 日常使用
 
 ```powershell
-# 输入关键词后，打开可多选、预览详情的终端应用商店
-win store
-win store powertoys
+# 打开终端应用商店；也可以直接输入软件名
+win
+win powertoys
+win vscode -From winget
 
-# 实时联合搜索 WinGet、Scoop 和 mise，并标出命中的基线项
-win search powertoys
+# 只打印搜索结果，不打开选择界面
+win find powertoys
 
-# 只搜索某一个来源
-win search vscode -Manager winget
-win find node -Manager mise
-
-# 查看归属和当前选中的 profiles
-win ls
-
-# 查看、启用或停用用户 profile；链接也可以来自 GitHub Raw 或 Gist
-win use
-win use C:\Users\me\my-winenv.json
-win use https://example.com/my-winenv.json
-win unuse
-
-# 检查管理器、清单冲突以及命令解析路径
-win doctor
-
-# 预览并统一更新
-win up
-
-# 查看或只更新 Winenv 本身
-win version
-win selfup
-
-# 安装额外的 editor profile
-win add -Profiles editor
-
-# 安装基线中的单个软件
+# 应用当前 profile，或者安装一个已知软件
+win add
 win add vscode
-
-# 清单外名称会先联合搜索，再让你选择来源
-win add powertoys
-
-# 也可复制 search 返回的令牌，跳过再次选择
-win add winget:winget/Microsoft.PowerToys
 win add scoop:extras/powertoys
 
-# 只显示将要执行的操作
-win add -DryRun
+# 启用本地或线上 profile；停用不会卸载软件
+win use C:\Users\me\my-winenv.json
+win use https://example.com/my-winenv.json
+win off
 
-# 从各管理器的已安装清单中搜索并选择卸载
+# 更新、卸载和清理
+win up
 win rm powertoys
-
-# 不带关键词时浏览全部已安装项；令牌可直接定位来源
 win rm
-win rm scoop:extras/powertoys
-
-# 立即清理 Scoop 旧版本以及 mise 当前未再引用的版本
 win clean
+
+# 查看当前配置，检查环境
+win ls
+win check
+
+# 查看版本和简明帮助
+win ver
+win help
+
+# 常用短参数：限定来源、只预览、自动确认
+win node -From mise
+win up -n
+win up -y
 ```
 
-完整动作名仍然可用，例如 `win update`、`win install` 和 `win remove vscode`。
+主界面只需要记住上面这些短命令。原有的 `store/search/install/update/remove/doctor/unuse` 等完整动作名仍然兼容已有脚本，但不再作为日常入口推荐。
 
-`store` 是参考 Omarchy 包选择器实现的交互入口：先给出一个查询词，再用 `fzf` 继续模糊筛选；`Tab` 多选、`Enter` 安装、`Alt-P` 切换详情预览、`Alt-J/K` 滚动预览，按 `Esc` 取消。界面中的每一行都显示管理器、仓库来源、名称、ID 和版本。`win browse` 和不带关键词的 `win search` 也会进入同一流程。如果当前只安装了 Winenv 本体而缺少界面依赖，先执行 `win add fzf`。
+直接运行 `win` 会进入参考 Omarchy 包选择器实现的交互入口；`win <软件名>` 会带着关键词直接进入。随后用 `fzf` 模糊筛选；`Tab` 多选、`Enter` 安装、`Alt-P` 切换详情预览、`Alt-J/K` 滚动预览，按 `Esc` 取消。界面中的每一行都显示管理器、仓库来源、名称、ID 和版本。如果当前只安装了 Winenv 本体而缺少界面依赖，先执行 `win add fzf`。
 
-`search` 不维护容易过期的远程索引，而是把三个管理器的实时结果转换成统一表格。WinGet 和 Scoop 都有同一个软件时，两行都会保留，Winenv 不会静默替你猜一个。每行会给出可直接执行的 `win add` 命令，清单外结果使用包含管理器与仓库的来源令牌；只有希望在下一台新机自动复现的软件，才需要以后加入自己的用户 profile。使用 `-Manager managed|winget|scoop|mise` 可以缩小搜索范围。
+`find` 不维护容易过期的远程索引，而是把三个管理器的实时结果转换成统一表格。WinGet 和 Scoop 都有同一个软件时，两行都会保留，Winenv 不会静默替你猜一个。每行会给出可直接执行的 `win add` 命令，清单外结果使用包含管理器与仓库的来源令牌；只有希望在下一台新机自动复现的软件，才需要以后加入自己的用户 profile。使用 `-From managed|winget|scoop|mise` 可以缩小搜索范围。
 
-`update` 会先更新 Winenv 本身，再调用 `winget upgrade --all`、`scoop update *` 和 `mise up`，因此管理器中已经登记、但不在 profile 的软件也会更新。它尊重 WinGet pin、Scoop hold 和 mise 配置。mise 会按自己的宽限期清理已被升级替换、且不再被任何配置引用的旧版本；真正需要保留的版本应在全局或项目 mise 配置中明确指定。`win clean` 只是用于立即执行清理。更新前会展示范围；除非传入 `-Yes`，否则会要求确认。
+`up` 会先更新 Winenv 本身，再调用 `winget upgrade --all`、`scoop update *` 和 `mise up`，因此管理器中已经登记、但不在 profile 的软件也会更新。它尊重 WinGet pin、Scoop hold 和 mise 配置。mise 会按自己的宽限期清理已被升级替换、且不再被任何配置引用的旧版本；真正需要保留的版本应在全局或项目 mise 配置中明确指定。`win clean` 只是用于立即执行清理。更新前会展示范围；除非传入 `-y`，否则会要求确认。
 
 ## Profile 分层
 
@@ -141,15 +122,15 @@ win use https://raw.githubusercontent.com/user/dotfiles/main/winenv.json
 
 `win use` 会校验 profile、展示将安装的软件并请求确认，然后在一次命令里完成启用和安装。远程 profile 只接受 HTTPS；导入后的内容会保存为 `%LOCALAPPDATA%\Winenv\user-profile.json` 中的稳定快照，选择状态保存在 `%LOCALAPPDATA%\Winenv\config.json`，因此不会因为原文件或在线链接随后变化而悄悄改变当前机器。
 
-Winenv 官方仓库和 Release 不携带维护者个人清单，也不需要维护一份社区 profile 目录。任何人都可以独立发布自己的配置并分享链接。`win unuse` 会回到纯运行时层，但不会擅自卸载已经安装的软件。
+Winenv 官方仓库和 Release 不携带维护者个人清单，也不需要维护一份社区 profile 目录。任何人都可以独立发布自己的配置并分享链接。`win off` 会回到纯运行时层，但不会擅自卸载已经安装的软件。
 
 可在命令行临时选择 profiles：
 
 ```powershell
-win add -Profiles base,desktop,development
+win add -P base,desktop,development
 ```
 
-这里的 `-Profiles` 只从当前有效的“运行时层 + 用户层”中选择分组，不会改变已激活的用户 profile。
+这里的 `-P`（完整形式为 `-Profiles`）只从当前有效的“运行时层 + 用户层”中选择分组，不会改变已激活的用户 profile。
 
 ## 默认归属策略
 
@@ -160,7 +141,7 @@ win add -Profiles base,desktop,development
 3. 是否需要 Windows 安装器、服务、注册表、文件关联或系统集成？是则归 WinGet。
 4. 如果三个来源都不适合，才登记为 `vendor` 例外。
 
-这套顺序是个人默认策略，不是需要人工维护的完整映射表。搜索结果始终保留实际来源，由你在安装时做最后选择。只有写入个人基线的包需要遵守“一个命令一个默认所有者”；`doctor` 会检查基线内的冲突，并展示 Windows 当前实际解析到的全部路径。
+这套顺序是个人默认策略，不是需要人工维护的完整映射表。搜索结果始终保留实际来源，由你在安装时做最后选择。只有写入个人基线的包需要遵守“一个命令一个默认所有者”；`win check` 会检查基线内的冲突，并展示 Windows 当前实际解析到的全部路径。
 
 ## 目录
 
