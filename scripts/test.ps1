@@ -370,7 +370,7 @@ if ($temporaryGroupPlan -notmatch "mise use --global node@26") {
 & (Join-Path $root "win.ps1") add "scoop:extras/powertoys" -n
 & (Join-Path $root "win.ps1") add powertoys -n
 $updatePlan = (& (Join-Path $root "win.ps1") up -n 6>&1 | Out-String -Width 4096)
-if ($updatePlan -notmatch "winget upgrade --all" -or $updatePlan -notmatch "scoop update \*" -or $updatePlan -notmatch "mise up") {
+if ($updatePlan -notmatch "winget(?:\.exe)?\s+upgrade --all" -or $updatePlan -notmatch "scoop update \*" -or $updatePlan -notmatch "mise up") {
     throw "The update route did not delegate the full inventory to each package manager."
 }
 & (Join-Path $root "win.ps1") rm vscode -n
