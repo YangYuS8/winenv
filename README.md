@@ -12,9 +12,9 @@ Winenv 自己不建立第四套软件仓库：
 - 同一个软件来自多个管理器时，保留为带来源标记的独立选项；
 - 安装清单外的软件不需要先修改 `profile.json`；
 - 更新和卸载读取各管理器当前的真实状态；
-- `profile.json` 只保存新机需要复现的个人基线和少量明确覆盖。
+- 内置 `profile.json` 只保存 Winenv 正常运行所需的软件；个人选择放在独立用户 profile 中。
 
-当前默认清单参考了这台 Omarchy 电脑的实际使用习惯：
+可选的 `yangyus8` 用户 profile 参考了维护者这台 Omarchy 电脑的实际使用习惯：
 
 - 普通 Windows 应用交给 WinGet；
 - 便携命令行工具交给 Scoop；
@@ -36,7 +36,13 @@ irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1 | iex
 2. 下载 `winenv-<version>.zip` 和 `SHA256SUMS`；
 3. 校验 SHA-256 后安装到 `%LOCALAPPDATA%\Winenv\versions`；
 4. 建立全局短命令 `win`；
-5. 按 `profile.json` 应用默认个人环境。
+5. 只安装 `profile.json` 中的 Winenv 运行依赖：PowerShell 7 和 fzf。
+
+维护者本人可以在首次安装时显式叠加个人 profile；这不会成为其他用户的默认行为：
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1))) -UserProfile yangyus8
+```
 
 如果只想安装 `win` 命令、暂时不安装清单中的软件：
 
@@ -66,6 +72,11 @@ win find node -Manager mise
 
 # 查看归属和当前选中的 profiles
 win ls
+
+# 查看、启用或停用用户 profile
+win profile
+win profile yangyus8
+win profile default
 
 # 检查管理器、清单冲突以及命令解析路径
 win doctor
@@ -108,22 +119,27 @@ win clean
 
 `store` 是参考 Omarchy 包选择器实现的交互入口：先给出一个查询词，再用 `fzf` 继续模糊筛选；`Tab` 多选、`Enter` 安装、`Alt-P` 切换详情预览、`Alt-J/K` 滚动预览，按 `Esc` 取消。界面中的每一行都显示管理器、仓库来源、名称、ID 和版本。`win browse` 和不带关键词的 `win search` 也会进入同一流程。如果当前只安装了 Winenv 本体而缺少界面依赖，先执行 `win add fzf`。
 
-`search` 不维护容易过期的远程索引，而是把三个管理器的实时结果转换成统一表格。WinGet 和 Scoop 都有同一个软件时，两行都会保留，Winenv 不会静默替你猜一个。每行会给出可直接执行的 `win add` 命令，清单外结果使用包含管理器与仓库的来源令牌；只有希望在下一台新机自动复现的软件，才需要以后加入 `profile.json`。使用 `-Manager managed|winget|scoop|mise` 可以缩小搜索范围。
+`search` 不维护容易过期的远程索引，而是把三个管理器的实时结果转换成统一表格。WinGet 和 Scoop 都有同一个软件时，两行都会保留，Winenv 不会静默替你猜一个。每行会给出可直接执行的 `win add` 命令，清单外结果使用包含管理器与仓库的来源令牌；只有希望在下一台新机自动复现的软件，才需要以后加入自己的用户 profile。使用 `-Manager managed|winget|scoop|mise` 可以缩小搜索范围。
 
 `update` 会先更新 Winenv 本身，再调用 `winget upgrade --all`、`scoop update *` 和 `mise up`，因此管理器中已经登记、但不在 profile 的软件也会更新。它尊重 WinGet pin、Scoop hold 和 mise 配置。mise 会按自己的宽限期清理已被升级替换、且不再被任何配置引用的旧版本；真正需要保留的版本应在全局或项目 mise 配置中明确指定。`win clean` 只是用于立即执行清理。更新前会展示范围；除非传入 `-Yes`，否则会要求确认。
 
-## 默认 profiles
+## Profile 分层
 
-`profile.json` 是新机基线，不是 Winenv 的软件目录。默认启用：
+`profile.json` 是不可掺入个人偏好的运行时层，默认只有：
 
-- `base`：PowerShell、Windows Terminal、Git；
-- `desktop`：Chrome、Obsidian；
-- `china`：QQ、微信、FlClash；
-- `gaming`：Steam；
-- `cli`：与当前 Omarchy `/usr/bin` 工具相近的便携 CLI；
-- `development`：与当前 mise 配置相近的开发工具。
+- PowerShell 7：稳定运行命令及详情预览；
+- fzf：提供交互式搜索、选择和卸载界面。
 
-`editor` 中的 VS Code 目前是可选项。
+`profiles/yangyus8.json` 是独立、可选的维护者用户层，包含 `base`、`desktop`、`china`、`gaming`、`cli`、`development`，以及默认不启用的 `editor`。它只有在明确执行 `win profile yangyus8` 或给安装器传入 `-UserProfile yangyus8` 时才会叠加。
+
+其他用户可以按同一 schema 编写自己的 JSON，然后导入一份稳定副本：
+
+```powershell
+win profile C:\Users\me\my-winenv.json
+win add
+```
+
+选择保存在 `%LOCALAPPDATA%\Winenv\config.json`；本地 JSON 会复制到 Winenv 状态目录，因此不依赖原文件继续存在。`win profile default` 会回到纯运行时层，但切换 profile 只改变以后由 Winenv 应用的基线，不会擅自卸载已经安装的软件。
 
 可在命令行临时选择 profiles：
 
@@ -131,7 +147,7 @@ win clean
 win add -Profiles base,desktop,development
 ```
 
-也可以直接修改 `profile.json` 中的 `defaultProfiles`。
+这里的 `-Profiles` 只从当前有效的“运行时层 + 用户层”中选择分组，不会改变已激活的用户 profile。
 
 ## 默认归属策略
 
@@ -151,8 +167,9 @@ winenv/
 ├── install.ps1          # 一行安装和自更新入口
 ├── win.ps1              # 核心命令
 ├── VERSION              # Actions 自动维护的版本
-├── profile.json         # 新机个人基线及少量归属覆盖
+├── profile.json         # 仅包含 Winenv 运行依赖
 ├── profile.schema.json  # 清单结构
+├── profiles/            # 可选用户 profile；默认不启用
 ├── migrations/          # 只执行一次的演进脚本
 ├── scripts/             # 测试和发布资产构建
 └── .github/workflows/   # CI 与自动发布
@@ -162,9 +179,10 @@ winenv/
 
 ```text
 %LOCALAPPDATA%\Winenv\state.json
+%LOCALAPPDATA%\Winenv\config.json
 ```
 
-这个文件只记录已执行的 migration，不存储密码或登录状态。
+前者只记录已执行的 migration；后者只记录当前用户 profile 的选择。两者都不存储密码或登录状态。
 
 ## 版本和发布
 

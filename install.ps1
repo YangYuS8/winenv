@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$Version,
+    [string]$UserProfile,
     [switch]$ToolOnly,
     [switch]$Force
 )
@@ -133,7 +134,11 @@ try {
 Write-Host "Winenv $resolvedVersion installed." -ForegroundColor Green
 Write-Host "Command: win"
 
+if (-not [string]::IsNullOrWhiteSpace($UserProfile)) {
+    & (Join-Path $targetPath "win.ps1") profile $UserProfile
+}
+
 if (-not $ToolOnly) {
-    Write-Host "`nApplying the default personal profile..." -ForegroundColor Cyan
+    Write-Host "`nApplying the active Winenv profiles..." -ForegroundColor Cyan
     & (Join-Path $targetPath "win.ps1") install
 }

@@ -4,27 +4,30 @@ $root = Split-Path -Parent $PSScriptRoot
 Write-Host "Validating JSON and schema..."
 $profilePath = Join-Path $root "profile.json"
 $schemaPath = Join-Path $root "profile.schema.json"
-$profileText = Get-Content -Raw -Path $profilePath
-$schemaValid = $profileText | Test-Json -SchemaFile $schemaPath
-if (-not $schemaValid) {
-    throw "profile.json does not match profile.schema.json"
-}
+$userProfilePaths = @(Get-ChildItem -Path (Join-Path $root "profiles") -Filter "*.json" -File)
+foreach ($candidatePath in @($profilePath) + $userProfilePaths.FullName) {
+    $profileText = Get-Content -Raw -Path $candidatePath
+    $schemaValid = $profileText | Test-Json -SchemaFile $schemaPath
+    if (-not $schemaValid) {
+        throw "$candidatePath does not match profile.schema.json"
+    }
 
-$profile = $profileText | ConvertFrom-Json
-$duplicateKeys = @($profile.packages | Group-Object key | Where-Object Count -gt 1)
-$duplicatePackages = @($profile.packages | Group-Object { "$($_.owner):$($_.id)".ToLowerInvariant() } | Where-Object Count -gt 1)
-if ($duplicateKeys.Count -gt 0 -or $duplicatePackages.Count -gt 0) {
-    throw "The profile contains duplicate package ownership."
-}
+    $profile = $profileText | ConvertFrom-Json
+    $duplicateKeys = @($profile.packages | Group-Object key | Where-Object Count -gt 1)
+    $duplicatePackages = @($profile.packages | Group-Object { "$($_.owner):$($_.id)".ToLowerInvariant() } | Where-Object Count -gt 1)
+    if ($duplicateKeys.Count -gt 0 -or $duplicatePackages.Count -gt 0) {
+        throw "$candidatePath contains duplicate package ownership."
+    }
 
-$commandOwners = @{}
-foreach ($package in @($profile.packages)) {
-    foreach ($command in @($package.commands)) {
-        $key = $command.ToLowerInvariant()
-        if ($commandOwners.ContainsKey($key) -and $commandOwners[$key] -ne $package.owner) {
-            throw "Command '$command' has multiple owners."
+    $commandOwners = @{}
+    foreach ($package in @($profile.packages)) {
+        foreach ($command in @($package.commands)) {
+            $key = $command.ToLowerInvariant()
+            if ($commandOwners.ContainsKey($key) -and $commandOwners[$key] -ne $package.owner) {
+                throw "Command '$command' has multiple owners in $candidatePath."
+            }
+            $commandOwners[$key] = $package.owner
         }
-        $commandOwners[$key] = $package.owner
     }
 }
 
@@ -39,9 +42,8 @@ foreach ($file in @(Get-ChildItem -Path $root -Filter "*.ps1" -File) + @(Get-Chi
 }
 
 Write-Host "Exercising command routes..."
-if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-    $env:LOCALAPPDATA = Join-Path ([IO.Path]::GetTempPath()) "winenv-tests"
-}
+$testLocalAppData = Join-Path ([IO.Path]::GetTempPath()) ("winenv-tests-" + [Guid]::NewGuid().ToString("N"))
+$env:LOCALAPPDATA = $testLocalAppData
 
 function global:winget {
     switch ($args[0]) {
@@ -95,7 +97,20 @@ function global:fzf {
     }
 }
 
-& (Join-Path $root "win.ps1") list
+$runtimeList = (& (Join-Path $root "win.ps1") list | Out-String -Width 4096)
+if ($runtimeList -notmatch "PowerShell 7" -or $runtimeList -notmatch "junegunn.fzf" -or $runtimeList -match "Tencent QQ") {
+    throw "The default runtime profile contains personal software or is missing a runtime dependency."
+}
+$runtimeInstall = (& (Join-Path $root "win.ps1") install -DryRun 6>&1 | Out-String -Width 4096)
+if ($runtimeInstall -notmatch "Microsoft.PowerShell" -or $runtimeInstall -notmatch "junegunn.fzf" -or $runtimeInstall -match "Tencent.QQ") {
+    throw "The default install route is not limited to Winenv runtime dependencies."
+}
+& (Join-Path $root "win.ps1") profile
+& (Join-Path $root "win.ps1") profile yangyus8
+$personalList = (& (Join-Path $root "win.ps1") list 6>&1 | Out-String -Width 4096)
+if ($personalList -notmatch "yangyus8" -or $personalList -notmatch "Tencent QQ" -or $personalList -notmatch "Node.js") {
+    throw "The selected user profile was not layered over the runtime profile."
+}
 & (Join-Path $root "win.ps1") store powertoys -DryRun
 if (@($global:WinenvFzfRows | Where-Object { $_ -match "^scoop:extras/powertoys`t" }).Count -ne 1) {
     throw "The live store did not keep the Scoop alternative separate from WinGet."
@@ -130,5 +145,19 @@ if ($updatePlan -notmatch "winget upgrade --all" -or $updatePlan -notmatch "scoo
 & (Join-Path $root "win.ps1") remove vscode -DryRun
 & (Join-Path $root "win.ps1") remove powertoys -DryRun
 & (Join-Path $root "win.ps1") cleanup -DryRun
+& (Join-Path $root "win.ps1") profile default
+$resetList = (& (Join-Path $root "win.ps1") list | Out-String -Width 4096)
+if ($resetList -match "Tencent QQ") {
+    throw "Disabling the user profile did not restore the runtime-only profile."
+}
+& (Join-Path $root "win.ps1") profile (Join-Path (Join-Path $root "profiles") "yangyus8.json")
+$localProfileList = (& (Join-Path $root "win.ps1") list 6>&1 | Out-String -Width 4096)
+if ($localProfileList -notmatch "User profile: @local" -or $localProfileList -notmatch "Tencent QQ") {
+    throw "A user profile imported from a local JSON file was not activated."
+}
+& (Join-Path $root "win.ps1") profile default
+if (Test-Path $testLocalAppData) {
+    Remove-Item -Path $testLocalAppData -Recurse -Force
+}
 
 Write-Host "All checks passed." -ForegroundColor Green

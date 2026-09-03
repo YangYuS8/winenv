@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("list", "ls", "store", "browse", "search", "find", "info", "show", "doctor", "check", "install", "add", "update", "up", "remove", "rm", "cleanup", "clean", "migrate", "version", "self-update", "selfup")]
+    [ValidateSet("list", "ls", "profile", "store", "browse", "search", "find", "info", "show", "doctor", "check", "install", "add", "update", "up", "remove", "rm", "cleanup", "clean", "migrate", "version", "self-update", "selfup")]
     [string]$Action = "list",
 
     [string[]]$Profiles,
@@ -20,6 +20,8 @@ $VersionPath = Join-Path $PSScriptRoot "VERSION"
 $MigrationPath = Join-Path $PSScriptRoot "migrations"
 $StateRoot = Join-Path $env:LOCALAPPDATA "Winenv"
 $StatePath = Join-Path $StateRoot "state.json"
+$ConfigPath = Join-Path $StateRoot "config.json"
+$LocalUserProfilePath = Join-Path $StateRoot "user-profile.json"
 $AllowedOwners = @("winget", "scoop", "mise", "vendor")
 $ActionAliases = @{
     "ls" = "list"
@@ -100,16 +102,123 @@ function Test-Command {
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
-function Read-ProfileDefinition {
-    if (-not (Test-Path $ProfilePath)) {
-        throw "Profile not found: $ProfilePath"
-    }
-
-    $definition = Get-Content -Raw -Path $ProfilePath | ConvertFrom-Json
+function Read-ProfileFile {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { throw "Profile not found: $Path" }
+    $definition = Get-Content -Raw -Path $Path | ConvertFrom-Json
     if ($definition.schemaVersion -ne 1) {
         throw "Unsupported profile schema version: $($definition.schemaVersion)"
     }
     return $definition
+}
+
+function Read-WinenvConfig {
+    if (-not (Test-Path $ConfigPath)) { return [pscustomobject]@{ userProfile = "" } }
+    $config = Get-Content -Raw -Path $ConfigPath | ConvertFrom-Json
+    return [pscustomobject]@{ userProfile = [string]$config.userProfile }
+}
+
+function Write-WinenvConfig {
+    param([string]$UserProfile)
+    Write-Plan "Set active user profile to '$UserProfile' in $ConfigPath"
+    if ($DryRun) { return }
+    New-Item -ItemType Directory -Path $StateRoot -Force | Out-Null
+    [pscustomobject]@{ userProfile = $UserProfile } |
+        ConvertTo-Json |
+        Set-Content -Path $ConfigPath -Encoding UTF8
+}
+
+function Get-BundledUserProfiles {
+    $directory = Join-Path $PSScriptRoot "profiles"
+    if (-not (Test-Path $directory)) { return @() }
+    return @(Get-ChildItem -Path $directory -Filter "*.json" -File | Sort-Object BaseName)
+}
+
+function Resolve-ActiveUserProfilePath {
+    param([string]$Selection)
+    if ([string]::IsNullOrWhiteSpace($Selection)) { return $null }
+    if ($Selection -eq "@local") { return $LocalUserProfilePath }
+    if ($Selection -notmatch "^[a-zA-Z0-9][a-zA-Z0-9._-]*$") {
+        throw "Invalid user profile selection in $ConfigPath. Run 'win profile default' to reset it."
+    }
+    return Join-Path (Join-Path $PSScriptRoot "profiles") "$Selection.json"
+}
+
+function Merge-ProfileDefinitions {
+    param(
+        $RuntimeProfile,
+        $UserProfile
+    )
+    if ($null -eq $UserProfile) { return $RuntimeProfile }
+    return [pscustomobject]@{
+        schemaVersion = 1
+        name = "$($RuntimeProfile.name) + $($UserProfile.name)"
+        defaultProfiles = @(@($RuntimeProfile.defaultProfiles) + @($UserProfile.defaultProfiles) | Select-Object -Unique)
+        scoopBuckets = @(@($RuntimeProfile.scoopBuckets) + @($UserProfile.scoopBuckets) | Select-Object -Unique)
+        packages = @(@($RuntimeProfile.packages) + @($UserProfile.packages))
+    }
+}
+
+function Read-ProfileDefinition {
+    $runtimeProfile = Read-ProfileFile $ProfilePath
+    $config = Read-WinenvConfig
+    $userProfilePath = Resolve-ActiveUserProfilePath $config.userProfile
+    if ($null -eq $userProfilePath) { return $runtimeProfile }
+    return Merge-ProfileDefinitions $runtimeProfile (Read-ProfileFile $userProfilePath)
+}
+
+function Show-UserProfileStatus {
+    $config = Read-WinenvConfig
+    $selection = if ([string]::IsNullOrWhiteSpace($config.userProfile)) { "none (runtime only)" } else { $config.userProfile }
+    Write-Host "Runtime profile: $ProfilePath"
+    Write-Host "User profile:    $selection"
+    $bundled = @(Get-BundledUserProfiles)
+    if ($bundled.Count -gt 0) {
+        Write-Host "Bundled choices: $(@($bundled.BaseName) -join ', ')"
+    }
+    Write-Host "`nUse 'win profile <name-or-json-path>' to activate one, or 'win profile default' to disable it." -ForegroundColor DarkGray
+}
+
+function Set-UserProfile {
+    if ([string]::IsNullOrWhiteSpace($Target)) {
+        Show-UserProfileStatus
+        return
+    }
+    if ($Target -in @("default", "none", "off")) {
+        Write-WinenvConfig ""
+        Write-Host "User profile disabled; Winenv will use only its runtime profile." -ForegroundColor Green
+        return
+    }
+
+    $selection = $Target
+    $candidatePath = $null
+    $bundledPath = Join-Path (Join-Path $PSScriptRoot "profiles") "$Target.json"
+    if ($Target -match "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" -and (Test-Path $bundledPath)) {
+        $candidatePath = $bundledPath
+    } elseif (Test-Path -LiteralPath $Target -PathType Leaf) {
+        $candidatePath = (Resolve-Path -LiteralPath $Target).Path
+        $selection = "@local"
+    } else {
+        $available = @((Get-BundledUserProfiles).BaseName) -join ", "
+        throw "User profile '$Target' was not found. Bundled choices: $available"
+    }
+
+    $runtimeProfile = Read-ProfileFile $ProfilePath
+    $userProfile = Read-ProfileFile $candidatePath
+    $merged = Merge-ProfileDefinitions $runtimeProfile $userProfile
+    Assert-ProfileDefinition $merged
+
+    if ($selection -eq "@local") {
+        Write-Plan "Copy $candidatePath to $LocalUserProfilePath"
+        if (-not $DryRun) {
+            New-Item -ItemType Directory -Path $StateRoot -Force | Out-Null
+            if ([IO.Path]::GetFullPath($candidatePath) -ine [IO.Path]::GetFullPath($LocalUserProfilePath)) {
+                Copy-Item -LiteralPath $candidatePath -Destination $LocalUserProfilePath -Force
+            }
+        }
+    }
+    Write-WinenvConfig $selection
+    Write-Host "User profile '$($userProfile.name)' is active. Run 'win add' to apply it." -ForegroundColor Green
 }
 
 function Get-SelectedProfiles {
@@ -823,6 +932,9 @@ function Show-Profile {
     param($Definition)
     $selectedProfiles = Get-SelectedProfiles $Definition
     Write-Host "Profile: $($Definition.name)"
+    $config = Read-WinenvConfig
+    $userProfile = if ([string]::IsNullOrWhiteSpace($config.userProfile)) { "none" } else { $config.userProfile }
+    Write-Host "User profile: $userProfile"
     Write-Host "Selected profiles: $($selectedProfiles -join ', ')"
     Get-SelectedPackages $Definition |
         Select-Object key, displayName, owner, id, @{Name = "profiles"; Expression = { $_.profiles -join "," }} |
@@ -971,6 +1083,11 @@ function Invoke-Cleanup {
         Write-Step "Pruning unused mise versions"
         Invoke-Native "mise" @("prune")
     }
+}
+
+if ($Action -eq "profile") {
+    Set-UserProfile
+    return
 }
 
 $definition = Read-ProfileDefinition
