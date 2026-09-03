@@ -1,3 +1,10 @@
+# [0.7.0](https://github.com/YangYuS8/winenv/compare/v0.6.0...v0.7.0) (2026-09-03)
+
+
+### Features
+
+* simplify the command interface ([eb7053b](https://github.com/YangYuS8/winenv/commit/eb7053bde06ef10cd2fc4be9b3b333594b737b1c))
+
 # [0.6.0](https://github.com/YangYuS8/winenv/compare/v0.5.1...v0.6.0) (2026-09-03)
 
 
