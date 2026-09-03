@@ -8,6 +8,9 @@ param(
     [Parameter(Position = 1)]
     [Alias("PackageKey", "Query")]
     [string]$Target,
+    [Parameter(Position = 2)]
+    [Alias("Url")]
+    [string]$Location,
     [Alias("From")]
     [ValidateSet("all", "managed", "winget", "scoop", "mise")]
     [string]$Manager = "all",
@@ -28,6 +31,7 @@ $LocalUserProfilePath = Join-Path $StateRoot "user-profile.json"
 $ProfilesRoot = Join-Path $StateRoot "profiles"
 $AllowedOwners = @("winget", "scoop", "mise", "vendor")
 $ResolvedManagerCommands = @{}
+$ApprovedScoopBucketSources = @{}
 $RuntimeRequirements = @{
     "powershell" = [pscustomobject]@{
         Name = "PowerShell 7"
@@ -57,7 +61,7 @@ $ActionAliases = @{
 }
 $CanonicalActions = @(
     "help", "list", "use", "unuse", "profile", "store", "search", "info", "doctor",
-    "install", "update", "remove", "cleanup", "migrate", "version", "self-update"
+    "install", "update", "remove", "cleanup", "migrate", "version", "self-update", "bucket"
 )
 
 if ([string]::IsNullOrWhiteSpace($Action)) {
@@ -100,6 +104,10 @@ Winenv keeps Windows software simple.
 
   win [software]       Search, select, and install
   win add [software]   Apply the profile, or install one known package
+  win add <file.json>  Install a local or HTTPS Scoop manifest
+  win bucket           List enabled Scoop buckets
+  win bucket <name> [https-url]
+                       Add a known or third-party Scoop bucket
   win rm [software]    Select and remove installed software
   win up               Update Winenv and all managed software
   win use <file|url>   Add, refresh, and install a profile
@@ -114,6 +122,71 @@ Winenv keeps Windows software simple.
 
 Useful shortcuts: -From winget|scoop|mise, -n (dry run), -y (confirm).
 "@
+}
+
+function Get-NormalizedScoopBucketUrl {
+    param([string]$Url)
+
+    if ([string]::IsNullOrWhiteSpace($Url)) { return "" }
+    try { $uri = [Uri]$Url } catch { throw "Invalid Scoop bucket URL: $Url" }
+    if (-not $uri.IsAbsoluteUri -or $uri.Scheme -ne "https" -or [string]::IsNullOrWhiteSpace($uri.Host)) {
+        throw "Third-party Scoop bucket URLs must use HTTPS: $Url"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($uri.UserInfo)) {
+        throw "Scoop bucket URLs must not contain credentials: $Url"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($uri.Query) -or -not [string]::IsNullOrWhiteSpace($uri.Fragment)) {
+        throw "Scoop bucket URLs must not contain a query string or fragment: $Url"
+    }
+    return $uri.AbsoluteUri.TrimEnd("/")
+}
+
+function ConvertTo-ScoopBucketDefinition {
+    param($Bucket)
+
+    if ($Bucket -is [string]) {
+        $name = $Bucket.Trim()
+        $url = ""
+    } else {
+        $properties = @($Bucket.psobject.Properties.Name)
+        foreach ($property in $properties) {
+            if ($property -notin @("name", "url")) {
+                throw "Unsupported Scoop bucket property: $property"
+            }
+        }
+        if ($properties -notcontains "name" -or $properties -notcontains "url") {
+            throw "A custom Scoop bucket requires both 'name' and 'url'."
+        }
+        $name = ([string]$Bucket.name).Trim()
+        $url = Get-NormalizedScoopBucketUrl ([string]$Bucket.url)
+    }
+    if ($name -notmatch "^[A-Za-z0-9][A-Za-z0-9._-]*$") {
+        throw "Invalid Scoop bucket name: '$name'"
+    }
+    return [pscustomobject]@{ Name = $name; Url = $url }
+}
+
+function Merge-ScoopBucketDefinitions {
+    param([array]$Buckets)
+
+    $byName = @{}
+    $result = New-Object System.Collections.Generic.List[object]
+    foreach ($bucketValue in @($Buckets)) {
+        $bucket = ConvertTo-ScoopBucketDefinition $bucketValue
+        $key = $bucket.Name.ToLowerInvariant()
+        if (-not $byName.ContainsKey($key)) {
+            $byName[$key] = $bucket
+            $result.Add($bucket)
+            continue
+        }
+        $existing = $byName[$key]
+        if ([string]$existing.Url -ne [string]$bucket.Url) {
+            $first = if ($existing.Url) { $existing.Url } else { "Scoop's known-bucket catalog" }
+            $second = if ($bucket.Url) { $bucket.Url } else { "Scoop's known-bucket catalog" }
+            throw "Scoop bucket '$($bucket.Name)' has conflicting sources: $first and $second"
+        }
+    }
+    return @($result | ForEach-Object { $_ })
 }
 
 function Update-WinenvSelf {
@@ -729,7 +802,7 @@ function Resolve-ProfileDefinitions {
             schemaVersion = 1
             name = ($profileNames -join " + ")
             defaultProfiles = @($defaultProfiles | Select-Object -Unique)
-            scoopBuckets = @($scoopBuckets | Select-Object -Unique)
+            scoopBuckets = @(Merge-ScoopBucketDefinitions $scoopBuckets)
             packages = $effectivePackages
         }
         Conflicts = @($conflicts)
@@ -882,6 +955,7 @@ function Set-UserProfile {
     $resolved = Resolve-ProfileConflicts $nextConfig $resolved $overrides
     $definition = $resolved.Definition
     $selectedPackages = @(Get-DefaultPackages $definition)
+    $customBuckets = @($definition.scoopBuckets | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Url) })
 
     if ($Apply) {
         Write-Step "Profile preview"
@@ -894,9 +968,25 @@ function Set-UserProfile {
             Select-Object displayName, owner, id, @{Name = "claims"; Expression = { @($_._claims) -join "," }} |
             Sort-Object owner, displayName |
             Format-Table -AutoSize
-        if (-not (Confirm-Operation "Save this profile snapshot and install the packages shown above?")) {
+        if ($customBuckets.Count -gt 0) {
+            Write-Host "`nThird-party Scoop buckets" -ForegroundColor Yellow
+            $customBuckets | Select-Object Name, Url | Format-Table -AutoSize
+            Write-Host "Their manifests can execute installation scripts. Only continue if you trust these publishers." -ForegroundColor Yellow
+        }
+        $confirmationPrompt = if ($customBuckets.Count -gt 0) {
+            "Trust the listed bucket sources, save this profile snapshot, and install the packages shown above?"
+        } else {
+            "Save this profile snapshot and install the packages shown above?"
+        }
+        if (-not (Confirm-Operation $confirmationPrompt)) {
             Write-Host "Profile activation cancelled."
             return
+        }
+        Assert-UnattendedScoopBucketTrust $customBuckets
+        if (-not $DryRun -and -not $Yes) {
+            foreach ($bucket in $customBuckets) {
+                $ApprovedScoopBucketSources[(Get-ScoopBucketApprovalKey $bucket)] = $true
+            }
         }
     }
 
@@ -1500,13 +1590,33 @@ function Assert-ProfileDefinition {
     foreach ($property in $definitionPropertyNames) {
         if ($definitionProperties -notcontains $property) { $errors.Add("Unsupported profile property: $property") }
     }
-    foreach ($collectionName in @("defaultProfiles", "scoopBuckets")) {
+    foreach ($collectionName in @("defaultProfiles")) {
         $items = @($Definition.$collectionName)
         if (@($items | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) {
             $errors.Add("$collectionName contains an empty value")
         }
         if (@($items | Group-Object | Where-Object Count -gt 1).Count -gt 0) {
             $errors.Add("$collectionName contains duplicate values")
+        }
+    }
+
+    $seenBuckets = @{}
+    foreach ($bucketValue in @($Definition.scoopBuckets)) {
+        try {
+            $bucket = ConvertTo-ScoopBucketDefinition $bucketValue
+            $bucketKey = $bucket.Name.ToLowerInvariant()
+            if ($seenBuckets.ContainsKey($bucketKey)) {
+                $existing = $seenBuckets[$bucketKey]
+                if ([string]$existing.Url -eq [string]$bucket.Url) {
+                    $errors.Add("scoopBuckets contains duplicate bucket '$($bucket.Name)'")
+                } else {
+                    $errors.Add("scoopBuckets gives bucket '$($bucket.Name)' more than one source")
+                }
+            } else {
+                $seenBuckets[$bucketKey] = $bucket
+            }
+        } catch {
+            $errors.Add($_.Exception.Message)
         }
     }
 
@@ -1804,6 +1914,280 @@ function Ensure-Scoop {
     $ResolvedManagerCommands["scoop"] = $probe.Path
 }
 
+function Get-ScoopBucketInventory {
+    param([string]$Command = (Get-ResolvedManagerCommand "scoop"))
+
+    $result = Invoke-CapturedCommand $Command @("bucket", "list")
+    if ($result.ExitCode -eq 2) { return @() }
+    if ($null -ne $result.ExitCode -and $result.ExitCode -ne 0) {
+        throw "Unable to read the enabled Scoop buckets."
+    }
+
+    $objectRows = @($result.Lines | Where-Object {
+        $_ -isnot [string] -and @($_.psobject.Properties.Name) -contains "Name"
+    })
+    if ($objectRows.Count -gt 0) {
+        return @($objectRows | ForEach-Object {
+            [pscustomobject]@{
+                Name = [string]$_.Name
+                Source = if (@($_.psobject.Properties.Name) -contains "Source") { [string]$_.Source } else { "" }
+            }
+        })
+    }
+
+    return @(ConvertFrom-FixedWidthTable @($result.Lines | ForEach-Object { [string]$_ }) | ForEach-Object {
+        [pscustomobject]@{ Name = [string]$_[0]; Source = [string]$_[1] }
+    })
+}
+
+function Test-ScoopBucketSourceMatch {
+    param(
+        [string]$Actual,
+        [string]$Expected
+    )
+    if ([string]::IsNullOrWhiteSpace($Actual)) { return $false }
+    try {
+        $actualUri = [Uri]$Actual
+        $actualValue = $actualUri.AbsoluteUri.TrimEnd("/")
+    } catch {
+        $actualValue = $Actual.Trim().TrimEnd("/")
+    }
+    return $actualValue.Equals($Expected, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-ScoopBucketApprovalKey {
+    param($Bucket)
+    return "$($Bucket.Name.ToLowerInvariant())|$($Bucket.Url)"
+}
+
+function Ensure-ScoopGit {
+    if (@(Get-ExternalCommandCandidates "git").Count -gt 0) { return }
+    Write-Step "Installing Git for Scoop buckets"
+    Invoke-Native (Get-ResolvedManagerCommand "scoop") @("install", "git")
+    if ($DryRun) { return }
+    Refresh-ProcessPath
+    if (@(Get-ExternalCommandCandidates "git").Count -eq 0) {
+        throw "Git was installed with Scoop but is not visible in this process. Open a new PowerShell window and run the command again."
+    }
+}
+
+function Ensure-ScoopBucket {
+    param($BucketValue)
+
+    $bucket = ConvertTo-ScoopBucketDefinition $BucketValue
+    $arguments = @("bucket", "add", $bucket.Name)
+    if ($bucket.Url) { $arguments += $bucket.Url }
+    if ($DryRun) {
+        if ($bucket.Url) {
+            Write-Host "Third-party Scoop bucket: $($bucket.Name)" -ForegroundColor Yellow
+            Write-Host "Source: $($bucket.Url)"
+            Write-Host "Its manifests may execute installation scripts. Review and trust the publisher before adding it." -ForegroundColor Yellow
+        }
+        Ensure-ScoopGit
+        Invoke-Native (Get-ResolvedManagerCommand "scoop") $arguments
+        return
+    }
+
+    $inventory = @(Get-ScoopBucketInventory)
+    $matches = @($inventory | Where-Object { $_.Name -eq $bucket.Name })
+    if (-not $bucket.Url) {
+        if ($matches.Count -eq 0) {
+            Ensure-ScoopGit
+            Invoke-Native (Get-ResolvedManagerCommand "scoop") $arguments
+        }
+        return
+    }
+
+    if ($matches.Count -gt 0 -and (Test-ScoopBucketSourceMatch $matches[0].Source $bucket.Url)) { return }
+
+    $approvalKey = Get-ScoopBucketApprovalKey $bucket
+    if (-not $ApprovedScoopBucketSources.ContainsKey($approvalKey)) {
+        Write-Step "Trust a third-party Scoop bucket"
+        Write-Host "Name:   $($bucket.Name)"
+        Write-Host "Source: $($bucket.Url)"
+        if ($matches.Count -gt 0) { Write-Host "Current source: $($matches[0].Source)" }
+        Write-Host "Scoop manifests can execute installation scripts. Only continue if you trust this publisher." -ForegroundColor Yellow
+        if ($Yes) {
+            throw "A new or changed third-party Scoop bucket requires explicit interactive trust; nothing was changed."
+        }
+        if (-not (Confirm-Operation "Trust this bucket source?")) {
+            throw "Scoop bucket trust was not granted; nothing was changed."
+        }
+        $ApprovedScoopBucketSources[$approvalKey] = $true
+    }
+
+    Ensure-ScoopGit
+    if ($matches.Count -gt 0) {
+        Invoke-Native (Get-ResolvedManagerCommand "scoop") @("bucket", "rm", $bucket.Name)
+    }
+    Invoke-Native (Get-ResolvedManagerCommand "scoop") $arguments
+}
+
+function Assert-UnattendedScoopBucketTrust {
+    param([array]$Buckets)
+
+    $customBuckets = @($Buckets | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Url) })
+    if ($customBuckets.Count -eq 0 -or $DryRun -or -not $Yes) { return }
+    $scoopCommand = Get-OptionalManagerCommand "scoop"
+    if ($null -eq $scoopCommand) {
+        throw "A third-party Scoop bucket requires explicit interactive trust before this profile can be saved; run the command again without -y."
+    }
+    $inventory = @(Get-ScoopBucketInventory $scoopCommand)
+    foreach ($bucket in $customBuckets) {
+        $matches = @($inventory | Where-Object { $_.Name -eq $bucket.Name })
+        if ($matches.Count -eq 0 -or -not (Test-ScoopBucketSourceMatch $matches[0].Source $bucket.Url)) {
+            throw "Scoop bucket '$($bucket.Name)' is new or has a different source and requires explicit interactive trust; run the command again without -y."
+        }
+    }
+}
+
+function Invoke-ScoopBucketCommand {
+    if ([string]::IsNullOrWhiteSpace($Target)) {
+        $scoopCommand = Get-OptionalManagerCommand "scoop"
+        if ($null -eq $scoopCommand) {
+            Write-Host "Scoop is not installed. Add a bucket with: win bucket <name> [https-url]" -ForegroundColor Yellow
+            return
+        }
+        $inventory = @(Get-ScoopBucketInventory $scoopCommand)
+        Write-Step "Enabled Scoop buckets"
+        if ($inventory.Count -eq 0) {
+            Write-Host "No Scoop buckets are enabled. Add the default source with: win bucket main"
+        } else {
+            $inventory | Format-Table Name, Source -AutoSize
+        }
+        return
+    }
+
+    $bucketValue = if ([string]::IsNullOrWhiteSpace($Location)) {
+        [string]$Target
+    } else {
+        [pscustomobject]@{ name = [string]$Target; url = [string]$Location }
+    }
+    $bucket = ConvertTo-ScoopBucketDefinition $bucketValue
+    Assert-UnattendedScoopBucketTrust @($bucket)
+    Ensure-Scoop
+    Ensure-ScoopBucket $bucket
+    if (-not $DryRun) { Write-Host "Scoop bucket '$($bucket.Name)' is ready." -ForegroundColor Green }
+}
+
+function Test-ScoopManifestReference {
+    param([string]$Reference)
+
+    if (Test-Path -LiteralPath $Reference -PathType Leaf) {
+        return [IO.Path]::GetExtension($Reference).Equals(".json", [StringComparison]::OrdinalIgnoreCase)
+    }
+    if ($Reference -notmatch "^[a-zA-Z][a-zA-Z0-9+.-]*://" -and [IO.Path]::GetExtension($Reference).Equals(".json", [StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+    try { $uri = [Uri]$Reference } catch { return $false }
+    return $uri.IsAbsoluteUri -and [IO.Path]::GetExtension($uri.AbsolutePath).Equals(".json", [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-SafeUriDisplay {
+    param([Uri]$Uri)
+    $builder = [UriBuilder]$Uri
+    $builder.UserName = ""
+    $builder.Password = ""
+    $builder.Query = ""
+    $builder.Fragment = ""
+    return $builder.Uri.AbsoluteUri
+}
+
+function Install-ScoopManifest {
+    param([string]$Reference)
+
+    $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("winenv-manifest-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
+    try {
+        $isLocalFile = Test-Path -LiteralPath $Reference -PathType Leaf
+        $isUri = $false
+        if (-not $isLocalFile) {
+            try {
+                $uri = [Uri]$Reference
+                $isUri = $uri.IsAbsoluteUri
+            } catch { $isUri = $false }
+        }
+
+        if ($isUri) {
+            if ($uri.Scheme -ne "https" -or [string]::IsNullOrWhiteSpace($uri.Host)) { throw "Remote Scoop manifests must use HTTPS: $Reference" }
+            if (-not [string]::IsNullOrWhiteSpace($uri.UserInfo)) { throw "Scoop manifest URLs must not contain credentials." }
+            if (-not [IO.Path]::GetExtension($uri.AbsolutePath).Equals(".json", [StringComparison]::OrdinalIgnoreCase)) {
+                throw "A Scoop manifest URL must end in .json."
+            }
+            Write-Step "Downloading Scoop manifest"
+            $response = Invoke-WebRequest -Uri $Reference -UseBasicParsing -Headers @{
+                "Accept" = "application/json"
+                "User-Agent" = "winenv"
+            }
+            $finalUri = $null
+            if ($null -ne $response.BaseResponse) {
+                if ($null -ne $response.BaseResponse.RequestMessage) {
+                    $finalUri = $response.BaseResponse.RequestMessage.RequestUri
+                } elseif ($null -ne $response.BaseResponse.ResponseUri) {
+                    $finalUri = $response.BaseResponse.ResponseUri
+                }
+            }
+            if ($null -ne $finalUri -and $finalUri.Scheme -ne "https") {
+                throw "The Scoop manifest download redirected away from HTTPS: $(Get-SafeUriDisplay $finalUri)"
+            }
+            $text = if ($response.Content -is [byte[]]) {
+                [Text.Encoding]::UTF8.GetString($response.Content)
+            } else {
+                [string]$response.Content
+            }
+            if ([Text.Encoding]::UTF8.GetByteCount($text) -gt 1MB) {
+                throw "Scoop manifest is larger than 1 MiB."
+            }
+            $fileName = [Uri]::UnescapeDataString([IO.Path]::GetFileName($uri.AbsolutePath))
+            foreach ($invalidCharacter in [IO.Path]::GetInvalidFileNameChars()) {
+                $fileName = $fileName.Replace([string]$invalidCharacter, "_")
+            }
+            $snapshotPath = Join-Path $temporaryRoot $fileName
+            [IO.File]::WriteAllText($snapshotPath, $text, (New-Object Text.UTF8Encoding($false)))
+            $sourceLabel = Get-SafeUriDisplay $uri
+        } else {
+            if (-not $isLocalFile) { throw "Scoop manifest was not found: $Reference" }
+            if (-not [IO.Path]::GetExtension($Reference).Equals(".json", [StringComparison]::OrdinalIgnoreCase)) {
+                throw "A Scoop manifest file must end in .json."
+            }
+            $sourcePath = (Resolve-Path -LiteralPath $Reference).Path
+            if ((Get-Item -LiteralPath $sourcePath).Length -gt 1MB) { throw "Scoop manifest is larger than 1 MiB." }
+            $snapshotPath = Join-Path $temporaryRoot ([IO.Path]::GetFileName($sourcePath))
+            Copy-Item -LiteralPath $sourcePath -Destination $snapshotPath
+            $sourceLabel = $sourcePath
+        }
+
+        try { $manifest = Get-Content -Raw -LiteralPath $snapshotPath | ConvertFrom-Json -ErrorAction Stop } catch {
+            throw "Scoop manifest is not valid JSON: $sourceLabel"
+        }
+        if ($manifest -isnot [pscustomobject]) { throw "Scoop manifest root must be a JSON object: $sourceLabel" }
+        $manifestProperties = @($manifest.psobject.Properties.Name)
+        if ($manifestProperties -contains "schemaVersion" -and $manifestProperties -contains "packages") {
+            throw "This is a Winenv profile, not a Scoop manifest. Import it with 'win use'."
+        }
+
+        Write-Step "Scoop manifest preview"
+        Write-Host "Source:      $sourceLabel"
+        Write-Host "Manifest:    $([IO.Path]::GetFileName($snapshotPath))"
+        if ($manifestProperties -contains "version") { Write-Host "Version:     $($manifest.version)" }
+        if ($manifestProperties -contains "homepage") { Write-Host "Homepage:    $($manifest.homepage)" }
+        if ($manifestProperties -contains "description") { Write-Host "Description: $($manifest.description)" }
+        Write-Host "SHA-256:     $((Get-FileHash -LiteralPath $snapshotPath -Algorithm SHA256).Hash.ToLowerInvariant())"
+        Write-Host "Scoop manifests can execute installation scripts. Review the source and hash before continuing." -ForegroundColor Yellow
+        if (-not (Confirm-Operation "Install this Scoop manifest?")) {
+            Write-Host "Manifest installation cancelled."
+            return
+        }
+
+        Ensure-Scoop
+        Invoke-Native (Get-ResolvedManagerCommand "scoop") @("install", $snapshotPath)
+    } finally {
+        if (Test-Path -LiteralPath $temporaryRoot) {
+            Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
+        }
+    }
+}
+
 function Enable-WinenvInPowerShell {
     $documents = [Environment]::GetFolderPath("MyDocuments")
     if ([string]::IsNullOrWhiteSpace($documents)) {
@@ -1933,9 +2317,7 @@ function Install-Packages {
 
     if ($owners -contains "scoop") {
         foreach ($bucket in @($Definition.scoopBuckets)) {
-            if ($bucket -ne "main") {
-                Invoke-Native (Get-ResolvedManagerCommand "scoop") @("bucket", "add", [string]$bucket) -IgnoreExitCode
-            }
+            Ensure-ScoopBucket $bucket
         }
     }
 
@@ -1961,6 +2343,11 @@ function Install-SelectedPackages {
     if ([string]::IsNullOrWhiteSpace($Target)) {
         Sync-WinenvMiseConfig $Definition
         Install-Packages $Definition @(Get-SelectedPackages $Definition) -ProfileManagedMise:(!$Profiles -or $Profiles.Count -eq 0)
+        return
+    }
+
+    if (Test-ScoopManifestReference $Target) {
+        Install-ScoopManifest $Target
         return
     }
 
@@ -2236,6 +2623,11 @@ if ($Action -eq "version") {
 
 if ($Action -eq "self-update") {
     Update-WinenvSelf
+    return
+}
+
+if ($Action -eq "bucket") {
+    Invoke-ScoopBucketCommand
     return
 }
 

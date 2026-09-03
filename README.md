@@ -76,6 +76,14 @@ win add
 win add vscode
 win add scoop:extras/powertoys
 
+# Scoop 默认仓库没有时，添加官方已知 bucket 或可信第三方 bucket
+win bucket extras
+win bucket mybucket https://github.com/user/scoop-bucket.git
+
+# 只有独立 Scoop manifest 时，直接安装本地文件或 HTTPS 链接
+win add C:\Users\me\Downloads\my-app.json
+win add https://example.com/my-app.json
+
 # 本地和线上 profile 可以同时启用；停用不会卸载软件
 win use C:\Users\me\my-winenv.json
 win use https://example.com/my-winenv.json
@@ -106,6 +114,48 @@ win up -y
 直接运行 `win` 会进入参考 Omarchy 包选择器实现的交互入口；`win <软件名>` 会带着关键词直接进入。随后用 `fzf` 模糊筛选；`Tab` 多选、`Enter` 安装、`Alt-P` 切换详情预览、`Alt-J/K` 滚动预览，按 `Esc` 取消。界面中的每一行都显示管理器、仓库来源、名称、ID 和版本。如果当前只安装了 Winenv 本体而缺少界面依赖，先执行 `win add fzf`。
 
 `find` 不维护容易过期的远程索引，而是把三个管理器的实时结果转换成统一表格。WinGet 和 Scoop 都有同一个软件时，两行都会保留，Winenv 不会静默替你猜一个。每行会给出可直接执行的 `win add` 命令，清单外结果使用包含管理器与仓库的来源令牌；只有希望在下一台新机自动复现的软件，才需要以后加入自己的用户 profile。使用 `-From managed|winget|scoop|mise` 可以缩小搜索范围。
+
+## Scoop 扩展源与独立 manifest
+
+Scoop 默认 bucket 没有某个软件时，不需要把软件硬编码进 Winenv。先按 [Scoop 官方 bucket 机制](https://github.com/ScoopInstaller/Scoop/wiki/Buckets)看发布者或社区是否提供了可添加的仓库：
+
+```powershell
+# Scoop 已知 bucket
+win bucket extras
+
+# 任意 Git bucket，必须是 HTTPS
+win bucket mybucket https://github.com/user/scoop-bucket.git
+
+# 查看当前已启用的 bucket
+win bucket
+```
+
+第三方 bucket 是可执行代码的信任边界，因为其中的 manifest 可以包含安装脚本。Winenv 会显示完整来源；首次加入和同名 bucket 更换 URL 都要求人工确认，`-y` 不会替你建立这份信任。已经存在且 URL 相同的 bucket 会直接复用。
+
+需要跨机器复现时，可在用户 profile 中声明 bucket。普通字符串仍表示 Scoop 的已知 bucket；第三方源使用对象：
+
+```json
+{
+  "scoopBuckets": [
+    "extras",
+    {
+      "name": "mybucket",
+      "url": "https://github.com/user/scoop-bucket.git"
+    }
+  ]
+}
+```
+
+多个启用 profile 声明同名同 URL 时只处理一次；同名不同 URL、或者一份把它当作 Scoop 已知 bucket 而另一份指定第三方地址时，会在保存或安装前报冲突，不按导入顺序换源。
+
+如果发布者只提供[单个 Scoop manifest](https://github.com/ScoopInstaller/Scoop/wiki/Creating-an-app-manifest)，可以直接安装：
+
+```powershell
+win add C:\Users\me\Downloads\my-app.json
+win add https://example.com/my-app.json
+```
+
+Winenv 只接受本地 `.json` 或 HTTPS `.json`，限制为 1 MiB，并在安装前显示来源、版本和实际安装快照的 SHA-256。确认后仍由 Scoop 完成安装和卸载登记。单独 manifest 没有稳定的 bucket 更新源；长期使用、需要 `scoop update` 自动发现新版本时，应把 manifest 放进自己或可信维护者的 bucket。
 
 `up` 会先更新 Winenv 本身，再调用 `winget upgrade --all`、`scoop update *` 和 `mise up`，因此管理器中已经登记、但不在 profile 的软件也会更新。它尊重 WinGet pin、Scoop hold 和 mise 配置。mise 会按自己的宽限期清理已被升级替换、且不再被任何配置引用的旧版本；真正需要保留的版本应在全局或项目 mise 配置中明确指定。`win clean` 只是用于立即执行清理。更新前会展示范围；除非传入 `-y`，否则会要求确认。
 
@@ -170,6 +220,8 @@ win add -P base,desktop,development
 
 这套顺序是个人默认策略，不是需要人工维护的完整映射表。搜索结果始终保留实际来源，由你在安装时做最后选择。只有写入个人基线的包需要遵守“一个命令一个默认所有者”；`win check` 会检查基线内的冲突，并展示 Windows 当前实际解析到的全部路径。
 
+当前 `vendor` 仍只记录人工安装说明。任意 EXE/MSI 的静默参数、返回码、卸载方式和升级语义差异很大，因此这一版不会把不透明安装器伪装成可复现包；优先使用上游 Scoop manifest、自建 bucket，或先为软件补一份可审查的 manifest。
+
 ## 目录
 
 ```text
@@ -228,6 +280,7 @@ chore: 更新维护配置                         # 不发布
 - 删除 Windows 内置组件；
 - 修改 Defender、BitLocker、Windows Update 策略；
 - 自动安装驱动；
+- 直接执行任意本地 EXE/MSI 安装器；
 - 保存登录令牌和软件私有数据；
 - 绕过各包管理器自身的保留、pin、hold 或清理策略。
 

@@ -51,6 +51,7 @@ $testUserProfilePath = Join-Path $testLocalAppData "test-user-profile.json"
 $testSharedProfilePath = Join-Path $testLocalAppData "test-shared-profile.json"
 $testConflictProfilePath = Join-Path $testLocalAppData "test-conflict-profile.json"
 $testProviderConflictProfilePath = Join-Path $testLocalAppData "test-provider-conflict-profile.json"
+$testScoopManifestPath = Join-Path $testLocalAppData "sample-app.json"
 New-Item -ItemType Directory -Path $testLocalAppData -Force | Out-Null
 $testBinPath = Join-Path $testLocalAppData "bin"
 New-Item -ItemType Directory -Path $testBinPath -Force | Out-Null
@@ -120,6 +121,15 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     )
 } | ConvertTo-Json -Depth 8 | Set-Content -Path $testProviderConflictProfilePath -Encoding UTF8
 
+[pscustomobject]@{
+    version = "1.2.3"
+    description = "Route test Scoop manifest"
+    homepage = "https://example.com"
+    url = "https://example.com/sample.zip"
+    hash = "0123456789abcdef"
+    bin = "sample.exe"
+} | ConvertTo-Json -Depth 8 | Set-Content -Path $testScoopManifestPath -Encoding UTF8
+
 function global:winget {
     switch ($args[0]) {
         "search" {
@@ -182,6 +192,7 @@ function global:Invoke-WebRequest {
         "https://profiles.example/shared.json" { $testSharedProfilePath }
         "https://profiles.example/conflict.json" { $testConflictProfilePath }
         "https://profiles.example/provider-conflict.json" { $testProviderConflictProfilePath }
+        "https://packages.example/sample-app.json?token=test-secret" { $testScoopManifestPath }
         default { throw "Unexpected test URL: $Uri" }
     }
     return [pscustomobject]@{ Content = Get-Content -Raw -Path $path }
@@ -194,6 +205,7 @@ function global:Read-Host {
 }
 
 & (Join-Path $PSScriptRoot "test-requirements.ps1")
+& (Join-Path $PSScriptRoot "test-scoop-sources.ps1")
 
 $runtimeList = (& (Join-Path $root "win.ps1") list | Out-String -Width 4096)
 if ($runtimeList -notmatch "PowerShell 7" -or $runtimeList -notmatch "junegunn.fzf" -or $runtimeList -match "Node.js") {
@@ -369,6 +381,22 @@ if ($temporaryGroupPlan -notmatch "mise use --global node@26") {
 & (Join-Path $root "win.ps1") add vscode -n
 & (Join-Path $root "win.ps1") add "scoop:extras/powertoys" -n
 & (Join-Path $root "win.ps1") add powertoys -n
+$knownBucketPlan = (& (Join-Path $root "win.ps1") bucket extras -n 6>&1 | Out-String -Width 4096)
+if ($knownBucketPlan -notmatch "scoop bucket add extras") {
+    throw "The compact known-bucket command did not produce the expected Scoop plan."
+}
+$customBucketPlan = (& (Join-Path $root "win.ps1") bucket community "https://github.com/example/scoop-bucket.git" -n 6>&1 | Out-String -Width 4096)
+if ($customBucketPlan -notmatch "Third-party Scoop bucket" -or $customBucketPlan -notmatch "scoop-bucket\.git" -or $customBucketPlan -notmatch "scoop bucket add community") {
+    throw "The compact custom-bucket command did not show its trust context and installation plan."
+}
+$localManifestPlan = (& (Join-Path $root "win.ps1") add $testScoopManifestPath -n 6>&1 | Out-String -Width 4096)
+if ($localManifestPlan -notmatch "Scoop manifest preview" -or $localManifestPlan -notmatch "SHA-256" -or $localManifestPlan -notmatch "scoop install .*sample-app\.json") {
+    throw "The local Scoop manifest route did not preview and plan its snapshot installation."
+}
+$remoteManifestPlan = (& (Join-Path $root "win.ps1") add "https://packages.example/sample-app.json?token=test-secret" -n 6>&1 | Out-String -Width 4096)
+if ($remoteManifestPlan -notmatch "Scoop manifest preview" -or $remoteManifestPlan -match "test-secret" -or $remoteManifestPlan -notmatch "https://packages\.example/sample-app\.json") {
+    throw "The HTTPS Scoop manifest route did not sanitize its displayed source."
+}
 $updatePlan = (& (Join-Path $root "win.ps1") up -n 6>&1 | Out-String -Width 4096)
 if ($updatePlan -notmatch "winget(?:\.exe)?\s+upgrade --all" -or $updatePlan -notmatch "scoop update \*" -or $updatePlan -notmatch "mise up") {
     throw "The update route did not delegate the full inventory to each package manager."
