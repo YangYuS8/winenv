@@ -418,7 +418,7 @@ if ($installerPlan -notmatch "Windows installer preview" -or $installerPlan -not
     throw "The direct EXE route did not inspect the installer, verify its hash, and preserve its arguments."
 }
 $winGetManifestPlan = (& (Join-Path $root "win.ps1") add $testWinGetManifestPath -n 6>&1 | Out-String -Width 4096)
-if ($winGetManifestPlan -notmatch "Local WinGet manifest preview" -or $winGetManifestPlan -notmatch "winget validate" -or $winGetManifestPlan -notmatch "winget install --manifest") {
+if ($winGetManifestPlan -notmatch "Local WinGet manifest preview" -or $winGetManifestPlan -notmatch "winget(?:\.exe)?\s+validate" -or $winGetManifestPlan -notmatch "winget(?:\.exe)?\s+install --manifest") {
     throw "The local WinGet manifest route did not preview, validate, and plan installation."
 }
 $updatePlan = (& (Join-Path $root "win.ps1") up -n 6>&1 | Out-String -Width 4096)
