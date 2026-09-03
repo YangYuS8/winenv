@@ -34,6 +34,9 @@ $StatePath = Join-Path $StateRoot "state.json"
 $ConfigPath = Join-Path $StateRoot "config.json"
 $LocalUserProfilePath = Join-Path $StateRoot "user-profile.json"
 $ProfilesRoot = Join-Path $StateRoot "profiles"
+$AdoptedProfileSource = "generated:installed"
+$AdoptedProfileId = "adopted"
+$AdoptedProfileName = "adopted"
 $InstallerLogRoot = Join-Path $StateRoot "logs"
 $AllowedOwners = @("winget", "scoop", "mise", "vendor")
 $ResolvedManagerCommands = @{}
@@ -64,10 +67,12 @@ $ActionAliases = @{
     "ver" = "version"
     "self" = "self-update"
     "selfup" = "self-update"
+    "apps" = "scan"
 }
 $CanonicalActions = @(
     "help", "list", "use", "unuse", "profile", "store", "search", "info", "doctor",
-    "install", "update", "remove", "cleanup", "migrate", "version", "self-update", "bucket"
+    "install", "update", "remove", "cleanup", "migrate", "version", "self-update", "bucket",
+    "scan", "adopt"
 )
 
 if ([string]::IsNullOrWhiteSpace($Action)) {
@@ -119,6 +124,8 @@ Winenv keeps Windows software simple.
   win bucket <name> [https-url]
                        Add a known or third-party Scoop bucket
   win rm [software]    Select and remove installed software
+  win scan [software]  Inventory existing apps without changing anything
+  win adopt [software] Select installed apps for a local reproducible profile
   win up               Update Winenv and all managed software
   win use <file|url>   Add, refresh, and install a profile
   win off [profile]    Disable one profile without uninstalling
@@ -1151,7 +1158,9 @@ function New-PackageCandidate {
         [string]$Version = "",
         [string]$Source = "",
         [string]$Description = "",
-        [string]$ManagedKey = ""
+        [string]$ManagedKey = "",
+        [bool]$Adoptable = $true,
+        [string]$RequestedVersion = ""
     )
 
     $normalizedSource = switch ($ManagerName) {
@@ -1176,6 +1185,8 @@ function New-PackageCandidate {
         Source = $normalizedSource
         Description = $Description
         ManagedKey = $ManagedKey
+        Adoptable = $Adoptable
+        RequestedVersion = $RequestedVersion
     }
 }
 
@@ -1280,10 +1291,83 @@ function Get-WinGetCandidates {
     if ($result.ExitCode -ne 0) { return @() }
     return @(ConvertFrom-FixedWidthTable $result.Lines | ForEach-Object {
         $values = @($_)
-        $source = if ($values.Count -ge 4) { [string]$values[-1] } else { "winget" }
-        if ([string]::IsNullOrWhiteSpace($source)) { $source = "winget" }
-        New-PackageCandidate -ManagerName "winget" -Id $values[1] -Name $values[0] -Version $values[2] -Source $source
+        $source = if ($values.Count -ge 4) { [string]$values[-1] } else { "" }
+        $sourceMatched = -not [string]::IsNullOrWhiteSpace($source)
+        if (-not $Installed -and -not $sourceMatched) {
+            $source = "winget"
+            $sourceMatched = $true
+        }
+        if ($Installed -and -not $sourceMatched) { $source = "windows" }
+        New-PackageCandidate -ManagerName "winget" -Id $values[1] -Name $values[0] -Version $values[2] -Source $source -Adoptable:$sourceMatched
     })
+}
+
+function Get-WinGetExportInventory {
+    if (-not (Test-Command "winget")) {
+        return [pscustomobject]@{ Succeeded = $false; Candidates = @() }
+    }
+
+    $exportPath = Join-Path ([IO.Path]::GetTempPath()) ("winenv-winget-export-" + [Guid]::NewGuid().ToString("N") + ".json")
+    try {
+        $result = Invoke-CapturedCommand "winget" @(
+            "export", "--output", $exportPath, "--include-versions", "--accept-source-agreements", "--disable-interactivity"
+        )
+        if (-not (Test-Path -LiteralPath $exportPath -PathType Leaf)) {
+            return [pscustomobject]@{ Succeeded = $false; Candidates = @() }
+        }
+        try {
+            $export = Get-Content -Raw -LiteralPath $exportPath | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            return [pscustomobject]@{ Succeeded = $false; Candidates = @() }
+        }
+        $candidates = @($export.Sources | ForEach-Object {
+            $sourceName = if ($_.SourceDetails -and $_.SourceDetails.Name) { [string]$_.SourceDetails.Name } else { "winget" }
+            foreach ($package in @($_.Packages)) {
+                $version = if (@($package.psobject.Properties.Name) -contains "Version") { [string]$package.Version } else { "" }
+                New-PackageCandidate -ManagerName "winget" -Id ([string]$package.PackageIdentifier) -Name ([string]$package.PackageIdentifier) -Version $version -Source $sourceName
+            }
+        })
+        return [pscustomobject]@{ Succeeded = $true; Candidates = $candidates }
+    } finally {
+        if (Test-Path -LiteralPath $exportPath) { Remove-Item -LiteralPath $exportPath -Force }
+    }
+}
+
+function Resolve-WinGetInstalledInventory {
+    param(
+        $Definition,
+        [array]$TableCandidates,
+        [string]$Query = ""
+    )
+
+    $exportResult = Get-WinGetExportInventory
+    if (-not $exportResult.Succeeded) { return @($TableCandidates) }
+    $managed = @(Get-ManagedCandidates $Definition $Query | Where-Object Manager -eq "winget")
+    $resolved = @($exportResult.Candidates | ForEach-Object {
+        $exported = $_
+        $tableMatch = @($TableCandidates | Where-Object {
+            if ($_.Manager -ne "winget") { return $false }
+            $tableId = [string]$_.Id
+            if ($tableId.Equals([string]$exported.Id, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+            $prefix = [regex]::Replace($tableId, "(?:…|\.\.\.)$", "")
+            return $prefix.Length -ge 4 -and ([string]$exported.Id).StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+        })
+        if ($tableMatch.Count -eq 1) {
+            $exported.Name = [string]$tableMatch[0].Name
+            if ([string]::IsNullOrWhiteSpace([string]$exported.Version)) { $exported.Version = [string]$tableMatch[0].Version }
+        }
+        $managedMatch = @($managed | Where-Object {
+            ([string]$_.Id).Equals([string]$exported.Id, [StringComparison]::OrdinalIgnoreCase)
+        } | Select-Object -First 1)
+        if ($managedMatch.Count -gt 0) { $exported.ManagedKey = [string]$managedMatch[0].ManagedKey }
+        if ([string]::IsNullOrWhiteSpace($Query) -or
+            ([string]$exported.Name).IndexOf($Query, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            ([string]$exported.Id).IndexOf($Query, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            $exported
+        }
+    })
+    $local = @($TableCandidates | Where-Object { $_.Manager -eq "winget" -and -not [bool]$_.Adoptable })
+    return @($resolved + $local)
 }
 
 function Get-ScoopCandidates {
@@ -1333,9 +1417,9 @@ function Get-MiseCandidates {
         return @($inventory.psobject.Properties | ForEach-Object {
             $id = [string]$_.Name
             $active = @($_.Value | Where-Object { $_.active } | Select-Object -First 1)
-            if ($active.Count -eq 0) { $active = @($_.Value | Select-Object -First 1) }
             if (($active.Count -gt 0) -and ([string]::IsNullOrWhiteSpace($Query) -or $id.IndexOf($Query, [StringComparison]::OrdinalIgnoreCase) -ge 0)) {
-                New-PackageCandidate -ManagerName "mise" -Id $id -Name $id -Version $active[0].version -Source "mise"
+                $requestedVersion = if (@($active[0].psobject.Properties.Name) -contains "requested_version") { [string]$active[0].requested_version } else { "" }
+                New-PackageCandidate -ManagerName "mise" -Id $id -Name $id -Version $active[0].version -Source "mise" -RequestedVersion $requestedVersion
             }
         })
     }
@@ -1362,11 +1446,12 @@ function Merge-PackageCandidates {
             continue
         }
         $existing = $merged[$key]
-        foreach ($property in @("Version", "Source", "Description", "ManagedKey")) {
+        foreach ($property in @("Version", "Source", "Description", "ManagedKey", "RequestedVersion")) {
             if ([string]::IsNullOrWhiteSpace([string]$existing.$property) -and -not [string]::IsNullOrWhiteSpace([string]$candidate.$property)) {
                 $existing.$property = $candidate.$property
             }
         }
+        if (-not [bool]$candidate.Adoptable) { $existing.Adoptable = $false }
     }
     return @($merged.Values)
 }
@@ -1391,16 +1476,254 @@ function Get-InstalledCandidates {
         [string]$Query = ""
     )
     $candidates = @()
-    if ($Manager -in @("all", "managed", "winget")) { $candidates += @(Get-WinGetCandidates $Query -Installed) }
+    if ($Manager -in @("all", "managed", "winget")) {
+        $winGetTable = @(Get-WinGetCandidates $Query -Installed)
+        $candidates += @(Resolve-WinGetInstalledInventory $Definition $winGetTable $Query)
+    }
     if ($Manager -in @("all", "managed", "scoop")) { $candidates += @(Get-ScoopCandidates $Query -Installed) }
     if ($Manager -in @("all", "managed", "mise")) { $candidates += @(Get-MiseCandidates $Query -Installed) }
 
     $managed = @(Get-ManagedCandidates $Definition $Query)
     foreach ($candidate in $candidates) {
-        $match = @($managed | Where-Object { $_.Token -eq $candidate.Token } | Select-Object -First 1)
+        $match = @($managed | Where-Object {
+            $_.Token -eq $candidate.Token -or
+            ($_.Manager -eq $candidate.Manager -and ([string]$_.Id).Equals([string]$candidate.Id, [StringComparison]::OrdinalIgnoreCase))
+        } | Select-Object -First 1)
         if ($match.Count -gt 0) { $candidate.ManagedKey = $match[0].ManagedKey }
     }
     return @(Merge-PackageCandidates $candidates | Sort-Object Manager, Name, Id)
+}
+
+function Get-InventoryStatus {
+    param($Candidate)
+    if (-not [string]::IsNullOrWhiteSpace([string]$Candidate.ManagedKey)) { return "managed" }
+    if ([bool]$Candidate.Adoptable) { return "adoptable" }
+    return "local"
+}
+
+function Show-InstalledInventory {
+    param(
+        $Definition,
+        [string]$Query = $Target
+    )
+
+    $candidates = @(Get-InstalledCandidates $Definition $Query)
+    if ($Manager -eq "managed") {
+        $candidates = @($candidates | Where-Object { (Get-InventoryStatus $_) -eq "managed" })
+    }
+    Write-Step "Installed software inventory"
+    if ($candidates.Count -eq 0) {
+        Write-Host "No installed software matched '$Query'." -ForegroundColor Yellow
+        return
+    }
+
+    $rows = @($candidates | ForEach-Object {
+        [pscustomobject]@{
+            status = Get-InventoryStatus $_
+            manager = [string]$_.Manager
+            source = [string]$_.Source
+            name = [string]$_.Name
+            id = [string]$_.Id
+            version = [string]$_.Version
+        }
+    })
+    $rows | Sort-Object status, manager, name | Format-Table -AutoSize
+
+    $managedCount = @($rows | Where-Object status -eq "managed").Count
+    $adoptableCount = @($rows | Where-Object status -eq "adoptable").Count
+    $localCount = @($rows | Where-Object status -eq "local").Count
+    Write-Host "managed: $managedCount | adoptable: $adoptableCount | local-only: $localCount" -ForegroundColor DarkGray
+    Write-Host "'local' means Windows knows the app is installed, but WinGet could not match it to a configured source. Scan never changes software or profiles." -ForegroundColor DarkGray
+}
+
+function Get-AdoptedPackageKey {
+    param($Candidate)
+    $identity = "$([string]$Candidate.Manager)|$([string]$Candidate.Source)|$([string]$Candidate.Id)".ToLowerInvariant()
+    $slug = ([regex]::Replace("$($Candidate.Manager)-$($Candidate.Id)".ToLowerInvariant(), "[^a-z0-9]+", "-")).Trim("-")
+    if ([string]::IsNullOrWhiteSpace($slug)) { $slug = "package" }
+    if ($slug.Length -gt 48) { $slug = $slug.Substring(0, 48).TrimEnd("-") }
+    return "$slug-$((Get-TextHash $identity).Substring(0, 8))"
+}
+
+function ConvertTo-AdoptedPackage {
+    param($Candidate)
+    $properties = [ordered]@{
+        key = Get-AdoptedPackageKey $Candidate
+        displayName = [string]$Candidate.Name
+        owner = [string]$Candidate.Manager
+        id = [string]$Candidate.Id
+    }
+    switch ([string]$Candidate.Manager) {
+        "winget" { $properties.source = [string]$Candidate.Source }
+        "scoop" { $properties.bucket = [string]$Candidate.Source }
+        "mise" {
+            $version = if (-not [string]::IsNullOrWhiteSpace([string]$Candidate.RequestedVersion)) {
+                [string]$Candidate.RequestedVersion
+            } else {
+                [string]$Candidate.Version
+            }
+            if (-not [string]::IsNullOrWhiteSpace($version)) { $properties.version = $version }
+        }
+    }
+    $properties.profiles = @($AdoptedProfileName)
+    $properties.commands = @()
+    return [pscustomobject]$properties
+}
+
+function Get-ScoopKnownBucketNames {
+    if (-not (Test-Command "scoop")) { return @("main") }
+    $result = Invoke-CapturedCommand "scoop" @("bucket", "known")
+    if ($result.ExitCode -ne 0) { return @("main") }
+    $names = @($result.Lines | Where-Object {
+        $_ -isnot [string] -and @($_.psobject.Properties.Name) -contains "Name"
+    } | ForEach-Object { [string]$_.Name })
+    if ($names.Count -eq 0) {
+        $names = @(ConvertFrom-FixedWidthTable @($result.Lines | ForEach-Object { [string]$_ }) | ForEach-Object { [string]$_[0] })
+    }
+    return @(@("main") + $names | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+}
+
+function Get-AdoptedScoopBuckets {
+    param([array]$Candidates)
+    $names = @($Candidates | Where-Object Manager -eq "scoop" | ForEach-Object Source | Where-Object { $_ } | Select-Object -Unique)
+    if ($names.Count -eq 0) { return @() }
+
+    $knownNames = @(Get-ScoopKnownBucketNames)
+    $enabled = @()
+    if (Test-Command "scoop") {
+        try { $enabled = @(Get-ScoopBucketInventory "scoop") } catch { $enabled = @() }
+    }
+    $buckets = @()
+    foreach ($name in $names) {
+        if (@($knownNames | Where-Object { $_.Equals([string]$name, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) {
+            $buckets += [string]$name
+            continue
+        }
+        $match = @($enabled | Where-Object { $_.Name -eq $name } | Select-Object -First 1)
+        if ($match.Count -gt 0 -and ([string]$match[0].Source) -match "^https://") {
+            $buckets += ,[pscustomobject]@{ name = [string]$name; url = (Get-NormalizedScoopBucketUrl ([string]$match[0].Source)) }
+        } else {
+            Write-Host "Could not resolve the source URL for Scoop bucket '$name'; it will be kept by name." -ForegroundColor Yellow
+            $buckets += [string]$name
+        }
+    }
+    return @($buckets)
+}
+
+function ConvertTo-StoredScoopBuckets {
+    param([array]$Buckets)
+    return @(Merge-ScoopBucketDefinitions $Buckets | ForEach-Object {
+        if ([string]::IsNullOrWhiteSpace([string]$_.Url)) {
+            [string]$_.Name
+        } else {
+            [pscustomobject]@{ name = [string]$_.Name; url = [string]$_.Url }
+        }
+    })
+}
+
+function Adopt-InstalledPackages {
+    param(
+        $Definition,
+        [string]$Query = $Target
+    )
+
+    if ($Manager -eq "managed") {
+        Write-Host "Already managed packages do not need adoption. Use 'win scan -From managed' to review them." -ForegroundColor DarkGray
+        return
+    }
+
+    $inventory = @(Get-InstalledCandidates $Definition $Query)
+    $adoptable = @($inventory | Where-Object {
+        [bool]$_.Adoptable -and [string]::IsNullOrWhiteSpace([string]$_.ManagedKey)
+    })
+    $localCount = @($inventory | Where-Object { -not [bool]$_.Adoptable }).Count
+    if ($adoptable.Count -eq 0) {
+        Write-Host "No unclaimed reproducible packages matched '$Query'." -ForegroundColor Yellow
+        if ($localCount -gt 0) {
+            Write-Host "$localCount local-only app(s) were left untouched because no configured source can reproduce them." -ForegroundColor DarkGray
+        }
+        return
+    }
+
+    $selected = @(Select-PackageCandidates $adoptable "Adopt installed > " -Multi)
+    if ($selected.Count -eq 0) { Write-Host "No packages selected."; return }
+    $newPackages = @($selected | ForEach-Object { ConvertTo-AdoptedPackage $_ })
+
+    Initialize-ProfileRegistry
+    $config = Read-WinenvConfig
+    $existingEntry = @($config.profiles | Where-Object { $_.source -eq $AdoptedProfileSource } | Select-Object -First 1)
+    $existingProfile = $null
+    if ($existingEntry.Count -gt 0) {
+        $existingPath = Get-ProfileSnapshotPath $existingEntry[0]
+        if (Test-Path -LiteralPath $existingPath) { $existingProfile = Read-ProfileFile $existingPath }
+    }
+
+    $packagesByIdentity = [ordered]@{}
+    foreach ($package in @($existingProfile.packages) + $newPackages) {
+        if ($null -eq $package) { continue }
+        $packagesByIdentity[(Get-PackageIdentity $package)] = $package
+    }
+    $existingBuckets = if ($null -ne $existingProfile) { @($existingProfile.scoopBuckets) } else { @() }
+    $adoptedProfile = [pscustomobject]@{
+        schemaVersion = 1
+        name = $AdoptedProfileName
+        defaultProfiles = @($AdoptedProfileName)
+        scoopBuckets = @(ConvertTo-StoredScoopBuckets @($existingBuckets + @(Get-AdoptedScoopBuckets $selected)))
+        packages = @($packagesByIdentity.Values)
+    }
+    Assert-ProfileDefinition $adoptedProfile
+
+    Write-Step "Adopt installed software"
+    $newPackages | Select-Object displayName, owner, id, version | Format-Table -AutoSize
+    $previousCount = if ($null -ne $existingProfile) { @($existingProfile.packages).Count } else { 0 }
+    Write-Host "Selected: $($newPackages.Count) | previous claims kept: $previousCount | resulting claims: $(@($adoptedProfile.packages).Count)" -ForegroundColor DarkGray
+    if ($existingEntry.Count -gt 0 -and -not [bool]$existingEntry[0].enabled) {
+        Write-Host "The retained '$AdoptedProfileName' snapshot is currently disabled; saving will re-enable all of its claims." -ForegroundColor Yellow
+    }
+    Write-Host "This records the selected packages in a local profile. It does not reinstall, upgrade, or uninstall anything." -ForegroundColor DarkGray
+    if (-not (Confirm-Operation "Save and enable the resulting local '$AdoptedProfileName' profile?")) {
+        Write-Host "Adoption cancelled."
+        return
+    }
+
+    $nextConfig = Copy-WinenvConfig $config
+    $now = [DateTime]::UtcNow.ToString("o")
+    if ($existingEntry.Count -gt 0) {
+        $entry = @($nextConfig.profiles | Where-Object id -eq $existingEntry[0].id)[0]
+        $entry.enabled = $true
+        $entry.hash = Get-TextHash ($adoptedProfile | ConvertTo-Json -Depth 10)
+        $entry.updatedAt = $now
+    } else {
+        $entry = [pscustomobject]@{
+            id = $AdoptedProfileId
+            name = $AdoptedProfileName
+            source = $AdoptedProfileSource
+            sourceType = "generated"
+            fileName = "$AdoptedProfileId.json"
+            hash = Get-TextHash ($adoptedProfile | ConvertTo-Json -Depth 10)
+            enabled = $true
+            addedAt = $now
+            updatedAt = $now
+        }
+        $nextConfig.profiles = @($nextConfig.profiles) + @($entry)
+    }
+
+    $overrides = @{ ([string]$entry.id) = $adoptedProfile }
+    $resolved = Resolve-ProfileDefinitions $nextConfig $overrides
+    $resolved = Resolve-ProfileConflicts $nextConfig $resolved $overrides
+    $snapshotPath = Get-ProfileSnapshotPath $entry
+    Write-Plan "Save the local adoption profile to $snapshotPath"
+    if (-not $DryRun) {
+        New-Item -ItemType Directory -Path $ProfilesRoot -Force | Out-Null
+        $adoptedProfile | ConvertTo-Json -Depth 10 | Set-Content -Path $snapshotPath -Encoding UTF8
+    }
+    Write-WinenvConfig $nextConfig
+    Sync-WinenvMiseConfig $resolved.Definition
+    if ($DryRun) {
+        Write-Host "The selected packages would be added to the local '$AdoptedProfileName' profile; installed software would not change."
+    } else {
+        Write-Host "Selected packages are now claimed by the local '$AdoptedProfileName' profile; installed software was not changed." -ForegroundColor Green
+    }
 }
 
 function Resolve-PackageReference {
@@ -1488,7 +1811,11 @@ function Show-PackageInfo {
             $managerProbe = Get-ManagerProbe "winget"
             if ($managerProbe.Status -eq "available") {
                 $source = if ($package.source) { [string]$package.source } else { "winget" }
-                Invoke-Native $managerProbe.Path @("show", "--id", [string]$package.id, "--exact", "--source", $source, "--accept-source-agreements", "--disable-interactivity") -IgnoreExitCode
+                if ($source -eq "windows") {
+                    Invoke-Native $managerProbe.Path @("list", "--id", [string]$package.id, "--exact", "--accept-source-agreements", "--disable-interactivity") -IgnoreExitCode
+                } else {
+                    Invoke-Native $managerProbe.Path @("show", "--id", [string]$package.id, "--exact", "--source", $source, "--accept-source-agreements", "--disable-interactivity") -IgnoreExitCode
+                }
             } else { Write-Host "WinGet is unavailable." }
         }
         "scoop" {
@@ -2560,6 +2887,77 @@ function Install-MisePackage {
     }
 }
 
+function Test-MiseVersionSatisfied {
+    param(
+        [string]$Requested,
+        $Candidate
+    )
+    if ([string]::IsNullOrWhiteSpace($Requested) -or $Requested -eq "latest") { return $true }
+    if (-not [string]::IsNullOrWhiteSpace([string]$Candidate.RequestedVersion) -and
+        ([string]$Candidate.RequestedVersion).Equals($Requested, [StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+    $actual = [string]$Candidate.Version
+    return $actual.Equals($Requested, [StringComparison]::OrdinalIgnoreCase) -or
+        $actual.StartsWith("$Requested.", [StringComparison]::OrdinalIgnoreCase) -or
+        $actual.StartsWith("$Requested-", [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Resolve-ExistingPackagePlan {
+    param([array]$Packages)
+    $owners = @($Packages | ForEach-Object owner | Sort-Object -Unique)
+    $installed = @()
+    if ($owners -contains "winget") {
+        $wingetTable = @(Get-WinGetCandidates "" -Installed)
+        $wingetExport = Get-WinGetExportInventory
+        if ($wingetExport.Succeeded) { $installed += @($wingetExport.Candidates) } else { $installed += $wingetTable }
+    }
+    if ($owners -contains "scoop") { $installed += @(Get-ScoopCandidates "" -Installed) }
+    if ($owners -contains "mise") { $installed += @(Get-MiseCandidates "" -Installed) }
+
+    $remaining = New-Object System.Collections.Generic.List[object]
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($package in @($Packages)) {
+        $matches = @($installed | Where-Object {
+            $_.Manager -eq $package.owner -and
+            ([string]$_.Id).Equals([string]$package.id, [StringComparison]::OrdinalIgnoreCase)
+        })
+        $existing = @($matches | Where-Object {
+            if ($package.owner -eq "mise") { return Test-MiseVersionSatisfied ([string]$package.version) $_ }
+            if (-not [string]::IsNullOrWhiteSpace([string]$package.version)) {
+                return ([string]$_.Version).Equals([string]$package.version, [StringComparison]::OrdinalIgnoreCase)
+            }
+            return $true
+        } | Select-Object -First 1)
+        if ($existing.Count -gt 0) {
+            $rows.Add([pscustomobject]@{
+                Action = "reuse"
+                Manager = [string]$package.owner
+                Name = [string]$package.displayName
+                Version = [string]$existing[0].Version
+            })
+            continue
+        }
+        $rows.Add([pscustomobject]@{
+            Action = if ($package.owner -eq "vendor") { "manual" } else { "install" }
+            Manager = [string]$package.owner
+            Name = [string]$package.displayName
+            Version = if ($package.version) { [string]$package.version } else { "latest" }
+        })
+        $remaining.Add($package)
+    }
+
+    if ($rows.Count -gt 0) {
+        Write-Step "Software plan"
+        Write-Host ("{0,-9} {1,-8} {2,-28} {3}" -f "action", "manager", "name", "version") -ForegroundColor DarkGray
+        foreach ($row in $rows) {
+            $color = if ($row.Action -eq "reuse") { "Green" } elseif ($row.Action -eq "install") { "Cyan" } else { "Yellow" }
+            Write-Host ("{0,-9} {1,-8} {2,-28} {3}" -f $row.Action, $row.Manager, $row.Name, $row.Version) -ForegroundColor $color
+        }
+    }
+    return @($remaining | ForEach-Object { $_ })
+}
+
 function Get-WinenvMiseConfigPath {
     $configRoot = if (-not [string]::IsNullOrWhiteSpace($env:MISE_CONFIG_DIR)) {
         $env:MISE_CONFIG_DIR
@@ -2601,7 +2999,7 @@ function Install-Packages {
         [switch]$ProfileManagedMise
     )
     $runtimePlan = Resolve-RuntimeInstallPlan @($Packages)
-    $packages = @($runtimePlan.Packages)
+    $packages = @(Resolve-ExistingPackagePlan @($runtimePlan.Packages))
     $owners = @($packages | ForEach-Object { $_.owner } | Sort-Object -Unique)
 
     Ensure-WinGet
@@ -2945,6 +3343,8 @@ $definition = Read-ProfileDefinition
 
 switch ($Action) {
     "list" { Show-Profile $definition }
+    "scan" { Show-InstalledInventory $definition }
+    "adopt" { Adopt-InstalledPackages $definition }
     "store" { Open-PackageStore $definition }
     "search" { Search-PackageCatalogs $definition }
     "info" { Show-PackageInfo $definition }

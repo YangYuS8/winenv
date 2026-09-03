@@ -146,6 +146,16 @@ Set-Content -LiteralPath $testWindowsInstallerPath -Value "route test installer"
 
 function global:winget {
     switch ($args[0]) {
+        "export" {
+            $outputIndex = [Array]::IndexOf([object[]]$args, "--output")
+            $exportPath = [string]$args[$outputIndex + 1]
+            [pscustomobject]@{
+                Sources = @([pscustomobject]@{
+                    Packages = @([pscustomobject]@{ PackageIdentifier = "Microsoft.PowerToys"; Version = "0.95.0" })
+                    SourceDetails = [pscustomobject]@{ Name = "winget" }
+                })
+            } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $exportPath -Encoding UTF8
+        }
         "search" {
             @(
                 "Name                  Id                        Version Source",
@@ -155,11 +165,13 @@ function global:winget {
             )
         }
         "list" {
-            @(
+            $rows = @(
                 "Name                  Id                        Version Source",
-                "--------------------  ------------------------  ------- ------",
-                "Microsoft PowerToys   Microsoft.PowerToys       0.95.0  winget"
+                "--------------------  ------------------------  ------- ------"
             )
+            if ($args -notcontains "Legacy") { $rows += "Microsoft PowerToys   Microsoft.PowerT…          0.95.0  winget" }
+            if ($args -notcontains "powertoys") { $rows += "Legacy Local Tool     {LOCAL-APP-ID}            2.0" }
+            $rows
         }
     }
     $global:LASTEXITCODE = 0
@@ -232,7 +244,7 @@ if ($runtimeInstall -notmatch "Runtime requirements" -or $runtimeInstall -notmat
 }
 & (Join-Path $root "win.ps1") use
 $helpText = (& (Join-Path $root "win.ps1") help 6>&1 | Out-String -Width 4096)
-if ($helpText -notmatch "win \[software\]" -or $helpText -notmatch "win off" -or $helpText -notmatch "-From") {
+if ($helpText -notmatch "win \[software\]" -or $helpText -notmatch "win off" -or $helpText -notmatch "win scan" -or $helpText -notmatch "win adopt" -or $helpText -notmatch "-From") {
     throw "The compact help does not describe the primary command interface."
 }
 
@@ -260,7 +272,7 @@ $env:MISE_CONFIG_DIR = $primaryMiseConfigDir
 Remove-Item -Path $legacyLocalAppData -Recurse -Force
 
 $remoteUsePlan = (& (Join-Path $root "win.ps1") use "https://profiles.example/test.json" -DryRun -Yes 6>&1 | Out-String -Width 4096)
-if ($remoteUsePlan -notmatch "Profile preview" -or $remoteUsePlan -notmatch "Microsoft.VisualStudioCode" -or $remoteUsePlan -notmatch "scoop install main/ripgrep" -or $remoteUsePlan -notmatch "mise install node@26") {
+if ($remoteUsePlan -notmatch "Profile preview" -or $remoteUsePlan -notmatch "Microsoft.VisualStudioCode" -or $remoteUsePlan -notmatch "scoop install main/ripgrep" -or $remoteUsePlan -notmatch "reuse\s+mise\s+Node\.js\s+26\.8\.1") {
     throw "The shared-profile use route did not preview and plan the complete installation."
 }
 & (Join-Path $root "win.ps1") profile "https://profiles.example/test.json"
@@ -361,6 +373,54 @@ $afterProviderConflictRegistry = Get-Content -Raw -Path $registryPath | ConvertF
 if (@($afterProviderConflictRegistry.profiles | Where-Object { $_.source -match "provider-conflict" }).Count -ne 0) {
     throw "A rejected provider conflict changed the persisted registry."
 }
+
+$scanText = (& (Join-Path $root "win.ps1") scan 6>&1 | Out-String -Width 4096)
+if ($scanText -notmatch "managed" -or $scanText -notmatch "adoptable" -or $scanText -notmatch "local" -or $scanText -notmatch "Legacy Local Tool" -or $scanText -notmatch "windows") {
+    throw "The installed-software scan did not distinguish managed, reproducible, and local-only applications."
+}
+$beforeAdoptRegistry = Get-Content -Raw -Path $registryPath
+$localAdopt = (& (Join-Path $root "win.ps1") adopt Legacy -y 6>&1 | Out-String -Width 4096)
+if ($localAdopt -notmatch "local-only app.+left untouched" -or (Get-Content -Raw -Path $registryPath) -ne $beforeAdoptRegistry) {
+    throw "A local-only Windows application was incorrectly adopted or changed profile state."
+}
+$adoptPlan = (& (Join-Path $root "win.ps1") adopt powertoys -n 6>&1 | Out-String -Width 4096)
+if ($adoptPlan -notmatch "Adopt installed software" -or $adoptPlan -notmatch "Microsoft PowerToys" -or $adoptPlan -notmatch "would be added" -or (Get-Content -Raw -Path $registryPath) -ne $beforeAdoptRegistry) {
+    throw "The adoption preview was incomplete or changed persisted state."
+}
+$adoptResult = (& (Join-Path $root "win.ps1") adopt powertoys -y 6>&1 | Out-String -Width 4096)
+$afterAdoptRegistry = Get-Content -Raw -Path $registryPath | ConvertFrom-Json
+$adoptedEntry = @($afterAdoptRegistry.profiles | Where-Object source -eq "generated:installed")
+if ($adoptResult -notmatch "installed software was not changed" -or $adoptedEntry.Count -ne 1 -or -not $adoptedEntry[0].enabled) {
+    throw "Selected installed software was not recorded in an enabled local adoption profile."
+}
+$adoptedSnapshotPath = Join-Path $profilesPath $adoptedEntry[0].fileName
+$adoptedSnapshotText = Get-Content -Raw -Path $adoptedSnapshotPath
+$adoptedSnapshot = $adoptedSnapshotText | ConvertFrom-Json
+if (@($adoptedSnapshot.packages).Count -ne 1 -or $adoptedSnapshot.packages[0].id -ne "Microsoft.PowerToys" -or $adoptedSnapshot.packages[0].owner -ne "winget") {
+    throw "The generated adoption profile did not preserve the selected reproducible package identity."
+}
+if (-not ($adoptedSnapshotText | Test-Json -SchemaFile $schemaPath)) {
+    throw "The generated adoption profile does not match the public profile schema."
+}
+$adoptedScan = (& (Join-Path $root "win.ps1") apps powertoys 6>&1 | Out-String -Width 4096)
+if ($adoptedScan -notmatch "managed" -or $adoptedScan -notmatch "Microsoft PowerToys") {
+    throw "A newly adopted package was not reported as managed."
+}
+$adoptedReusePlan = (& (Join-Path $root "win.ps1") add -P adopted -n 6>&1 | Out-String -Width 4096)
+if ($adoptedReusePlan -notmatch "reuse\s+winget\s+Microsoft PowerToys\s+0\.95\.0" -or $adoptedReusePlan -match "winget install --id Microsoft\.PowerToys") {
+    throw "An adopted WinGet package was not reused from the existing installation."
+}
+$offAdopted = (& (Join-Path $root "win.ps1") off adopted 6>&1 | Out-String -Width 4096)
+if ($offAdopted -notmatch "no installed software was changed") {
+    throw "Disabling the generated adoption profile did not preserve installed software."
+}
+$readoptResult = (& (Join-Path $root "win.ps1") adopt powertoys -y 6>&1 | Out-String -Width 4096)
+$readoptRegistry = Get-Content -Raw -Path $registryPath | ConvertFrom-Json
+$readoptSnapshot = Get-Content -Raw -Path $adoptedSnapshotPath | ConvertFrom-Json
+if ($readoptResult -notmatch "installed software was not changed" -or @($readoptRegistry.profiles | Where-Object source -eq "generated:installed").Count -ne 1 -or @($readoptSnapshot.packages).Count -ne 1) {
+    throw "Re-adopting an existing claim duplicated the local profile or its package."
+}
+& (Join-Path $root "win.ps1") off adopted | Out-Null
 & (Join-Path $root "win.ps1") -n
 $storeSelection = (& (Join-Path $root "win.ps1") powertoys -n 6>&1 | Out-String -Width 4096)
 if ($storeSelection -notmatch "Microsoft\.PowerToys" -or $storeSelection -notmatch "winget") {
@@ -390,7 +450,7 @@ if ([string]::IsNullOrWhiteSpace([string]$reportedVersion)) {
 }
 & (Join-Path $root "win.ps1") add -n
 $temporaryGroupPlan = (& (Join-Path $root "win.ps1") add -P personal-test -n 6>&1 | Out-String -Width 4096)
-if ($temporaryGroupPlan -notmatch "mise use --global node@26") {
+if ($temporaryGroupPlan -notmatch "reuse\s+mise\s+Node\.js\s+26\.8\.1" -or $temporaryGroupPlan -match "mise use --global node@26") {
     throw "A temporary profile-group install unexpectedly changed Winenv's persistent mise declarations."
 }
 & (Join-Path $root "win.ps1") add vscode -n

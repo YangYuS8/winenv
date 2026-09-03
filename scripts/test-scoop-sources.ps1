@@ -101,6 +101,22 @@ Write-Host "Checking Scoop buckets and direct manifests..."
     if ($commands.Count -ne 2 -or $commands[0] -ne "bucket rm community" -or $commands[1] -ne "bucket add community https://github.com/example/changed.git") {
         throw "An explicitly approved Scoop bucket source change was not applied safely."
     }
+
+    function Test-Command { param([string]$Name) return $true }
+    function Get-ScoopKnownBucketNames { return @("main", "extras") }
+    function Get-ScoopBucketInventory {
+        return @(
+            [pscustomobject]@{ Name = "extras"; Source = "https://github.com/ScoopInstaller/Extras.git" },
+            [pscustomobject]@{ Name = "community"; Source = "https://github.com/example/current.git" }
+        )
+    }
+    $adoptedBuckets = @(Get-AdoptedScoopBuckets @(
+        (New-PackageCandidate -ManagerName "scoop" -Id "powertoys" -Name "powertoys" -Source "extras"),
+        (New-PackageCandidate -ManagerName "scoop" -Id "sample" -Name "sample" -Source "community")
+    ))
+    if ($adoptedBuckets.Count -ne 2 -or $adoptedBuckets[0] -ne "extras" -or [string]$adoptedBuckets[1].url -ne "https://github.com/example/current.git") {
+        throw "Adoption did not preserve known Scoop buckets by name and custom buckets by HTTPS source."
+    }
 } $entry
 
 & {

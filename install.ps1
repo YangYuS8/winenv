@@ -142,3 +142,5 @@ if (-not $ToolOnly) {
     Write-Host "`nApplying the active Winenv profiles..." -ForegroundColor Cyan
     & (Join-Path $targetPath "win.ps1") install
 }
+
+Write-Host "`nAlready have software installed? Run 'win scan', then use 'win adopt' to select what should become reproducible." -ForegroundColor Cyan

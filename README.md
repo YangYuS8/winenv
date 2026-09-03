@@ -11,6 +11,7 @@ Winenv 自己不建立第四套软件仓库：
 - 搜索时实时查询 WinGet、Scoop 和 mise；
 - 同一个软件来自多个管理器时，保留为带来源标记的独立选项；
 - 安装清单外的软件不需要先修改 `profile.json`；
+- 既有 Windows 系统可以先扫描现状，再选择性纳入本机 profile；
 - 更新和卸载读取各管理器当前的真实状态；
 - 内置 `profile.json` 只保存 Winenv 正常运行所需的软件；个人选择放在独立用户 profile 中。
 
@@ -99,6 +100,10 @@ win rm powertoys
 win rm
 win clean
 
+# 接入一台已经装了很多软件的电脑
+win scan
+win adopt
+
 # 查看当前配置，检查环境
 win ls
 win check
@@ -118,6 +123,37 @@ win up -y
 直接运行 `win` 会进入参考 Omarchy 包选择器实现的交互入口；`win <软件名>` 会带着关键词直接进入。随后用 `fzf` 模糊筛选；`Tab` 多选、`Enter` 安装、`Alt-P` 切换详情预览、`Alt-J/K` 滚动预览，按 `Esc` 取消。界面中的每一行都显示管理器、仓库来源、名称、ID 和版本。如果当前只安装了 Winenv 本体而缺少界面依赖，先执行 `win add fzf`。
 
 `find` 不维护容易过期的远程索引，而是把三个管理器的实时结果转换成统一表格。WinGet 和 Scoop 都有同一个软件时，两行都会保留，Winenv 不会静默替你猜一个。每行会给出可直接执行的 `win add` 命令，清单外结果使用包含管理器与仓库的来源令牌；只有希望在下一台新机自动复现的软件，才需要以后加入自己的用户 profile。使用 `-From managed|winget|scoop|mise` 可以缩小搜索范围。
+
+## 接入已有 Windows 系统
+
+不需要重装系统，也不需要让 Winenv 把现有软件重新安装一遍。安装完成后执行：
+
+```powershell
+win scan
+```
+
+它只读扫描当前机器，并把结果分成三类：
+
+- `managed`：已经被某个启用的 Winenv profile 声明；
+- `adoptable`：当前安装能映射到 WinGet 软件源、Scoop bucket 或 mise 工具，可以在另一台机器上复现；
+- `local`：Windows 知道它已经安装，但 WinGet 无法和当前软件源匹配，例如部分 OEM 工具、驱动配套程序和手工安装的软件。
+
+[微软说明](https://learn.microsoft.com/windows/package-manager/winget/list)确认 `winget list` 同时包含由 WinGet 和其他方式安装的应用。因此 `winget` 来源表示“当前可由这个目录复现”，不等于 Winenv 声称它最初就是由 WinGet 安装。微软的 [`winget export`](https://learn.microsoft.com/windows/package-manager/winget/export) 也依赖安装记录与软件源 manifest 的元数据匹配，无法匹配的程序会产生警告。
+
+想把其中一部分变成自己的本机基线时执行：
+
+```powershell
+win adopt
+win adopt powertoys       # 先按关键词缩小范围
+win adopt -From scoop    # 只看某个管理器
+win adopt -n             # 选择并预览，但不写入
+```
+
+`adopt` 只允许选择 `adoptable` 项，并把选择追加到 `%LOCALAPPDATA%\Winenv\profiles\adopted.json`。它不会安装、升级或卸载任何软件，也不会把这份个人清单提交到 Winenv 仓库；重复执行只合并新的选择。mise 会保留当前声明的版本，Scoop 会尽量记录自定义 bucket 的 HTTPS 来源。Winenv 无法可靠猜测每个包提供的命令，所以生成项的 `commands` 留空；需要长期分享时，可以复制这份 JSON，补充名称、分组和命令后再通过 `win use <文件>` 纳入正式 profile。
+
+不想继续使用这层声明时执行 `win off adopted`。软件仍留在原处，只是不再由这个 profile 声明，快照也会保留；之后再次执行 `win adopt` 会在确认前明确提示并重新启用完整快照。`local` 项不会被强行写进可复现清单；它们仍可通过 `win rm` 查找和卸载，更新则继续交给软件自带更新器，除非以后能被 WinGet 软件源匹配。
+
+执行 `win add` 或 `win use` 时，Winenv 会先对照当前 WinGet、Scoop 和 mise 库存，明确显示 `reuse` 或 `install`。包身份和所需版本已经满足时直接原地复用，不运行安装命令。
 
 ## Scoop 扩展源与独立 manifest
 
