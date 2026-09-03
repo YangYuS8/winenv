@@ -1,3 +1,10 @@
+# [0.8.0](https://github.com/YangYuS8/winenv/compare/v0.7.0...v0.8.0) (2026-09-03)
+
+
+### Features
+
+* compose independent profiles ([8b0fae3](https://github.com/YangYuS8/winenv/commit/8b0fae3649ae02f77ff6c77cc46270a5b442c61d))
+
 # [0.7.0](https://github.com/YangYuS8/winenv/compare/v0.6.0...v0.7.0) (2026-09-03)
 
 
