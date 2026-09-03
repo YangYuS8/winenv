@@ -1,3 +1,10 @@
+# [0.6.0](https://github.com/YangYuS8/winenv/compare/v0.5.1...v0.6.0) (2026-09-03)
+
+
+### Features
+
+* import shared profiles with simple commands ([1b6a147](https://github.com/YangYuS8/winenv/commit/1b6a147b589dac125d98c1f0993bdcf0caa553ab))
+
 ## [0.5.1](https://github.com/YangYuS8/winenv/compare/v0.5.0...v0.5.1) (2026-09-03)
 
 
