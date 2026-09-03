@@ -128,20 +128,11 @@ function Write-WinenvConfig {
         Set-Content -Path $ConfigPath -Encoding UTF8
 }
 
-function Get-BundledUserProfiles {
-    $directory = Join-Path $PSScriptRoot "profiles"
-    if (-not (Test-Path $directory)) { return @() }
-    return @(Get-ChildItem -Path $directory -Filter "*.json" -File | Sort-Object BaseName)
-}
-
 function Resolve-ActiveUserProfilePath {
     param([string]$Selection)
     if ([string]::IsNullOrWhiteSpace($Selection)) { return $null }
     if ($Selection -eq "@local") { return $LocalUserProfilePath }
-    if ($Selection -notmatch "^[a-zA-Z0-9][a-zA-Z0-9._-]*$") {
-        throw "Invalid user profile selection in $ConfigPath. Run 'win profile default' to reset it."
-    }
-    return Join-Path (Join-Path $PSScriptRoot "profiles") "$Selection.json"
+    throw "Unsupported user profile selection in $ConfigPath. Run 'win profile default' to reset it."
 }
 
 function Merge-ProfileDefinitions {
@@ -172,11 +163,10 @@ function Show-UserProfileStatus {
     $selection = if ([string]::IsNullOrWhiteSpace($config.userProfile)) { "none (runtime only)" } else { $config.userProfile }
     Write-Host "Runtime profile: $ProfilePath"
     Write-Host "User profile:    $selection"
-    $bundled = @(Get-BundledUserProfiles)
-    if ($bundled.Count -gt 0) {
-        Write-Host "Bundled choices: $(@($bundled.BaseName) -join ', ')"
+    if (Test-Path $LocalUserProfilePath) {
+        Write-Host "Private copy:    $LocalUserProfilePath"
     }
-    Write-Host "`nUse 'win profile <name-or-json-path>' to activate one, or 'win profile default' to disable it." -ForegroundColor DarkGray
+    Write-Host "`nUse 'win profile <json-path>' to import one, or 'win profile default' to disable it." -ForegroundColor DarkGray
 }
 
 function Set-UserProfile {
@@ -190,18 +180,11 @@ function Set-UserProfile {
         return
     }
 
-    $selection = $Target
-    $candidatePath = $null
-    $bundledPath = Join-Path (Join-Path $PSScriptRoot "profiles") "$Target.json"
-    if ($Target -match "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" -and (Test-Path $bundledPath)) {
-        $candidatePath = $bundledPath
-    } elseif (Test-Path -LiteralPath $Target -PathType Leaf) {
-        $candidatePath = (Resolve-Path -LiteralPath $Target).Path
-        $selection = "@local"
-    } else {
-        $available = @((Get-BundledUserProfiles).BaseName) -join ", "
-        throw "User profile '$Target' was not found. Bundled choices: $available"
+    if (-not (Test-Path -LiteralPath $Target -PathType Leaf)) {
+        throw "User profile JSON was not found: $Target"
     }
+    $candidatePath = (Resolve-Path -LiteralPath $Target).Path
+    $selection = "@local"
 
     $runtimeProfile = Read-ProfileFile $ProfilePath
     $userProfile = Read-ProfileFile $candidatePath

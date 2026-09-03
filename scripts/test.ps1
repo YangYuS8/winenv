@@ -4,8 +4,7 @@ $root = Split-Path -Parent $PSScriptRoot
 Write-Host "Validating JSON and schema..."
 $profilePath = Join-Path $root "profile.json"
 $schemaPath = Join-Path $root "profile.schema.json"
-$userProfilePaths = @(Get-ChildItem -Path (Join-Path $root "profiles") -Filter "*.json" -File)
-foreach ($candidatePath in @($profilePath) + $userProfilePaths.FullName) {
+foreach ($candidatePath in @($profilePath)) {
     $profileText = Get-Content -Raw -Path $candidatePath
     $schemaValid = $profileText | Test-Json -SchemaFile $schemaPath
     if (-not $schemaValid) {
@@ -44,6 +43,19 @@ foreach ($file in @(Get-ChildItem -Path $root -Filter "*.ps1" -File) + @(Get-Chi
 Write-Host "Exercising command routes..."
 $testLocalAppData = Join-Path ([IO.Path]::GetTempPath()) ("winenv-tests-" + [Guid]::NewGuid().ToString("N"))
 $env:LOCALAPPDATA = $testLocalAppData
+$testUserProfilePath = Join-Path $testLocalAppData "test-user-profile.json"
+New-Item -ItemType Directory -Path $testLocalAppData -Force | Out-Null
+[pscustomobject]@{
+    schemaVersion = 1
+    name = "test-user"
+    defaultProfiles = @("personal-test")
+    scoopBuckets = @("main")
+    packages = @(
+        [pscustomobject]@{ key = "vscode"; displayName = "Visual Studio Code"; owner = "winget"; id = "Microsoft.VisualStudioCode"; source = "winget"; profiles = @("personal-test"); commands = @("code") },
+        [pscustomobject]@{ key = "ripgrep"; displayName = "ripgrep"; owner = "scoop"; id = "ripgrep"; bucket = "main"; profiles = @("personal-test"); commands = @("rg") },
+        [pscustomobject]@{ key = "node"; displayName = "Node.js"; owner = "mise"; id = "node"; version = "26"; profiles = @("personal-test"); commands = @("node", "npm", "npx") }
+    )
+} | ConvertTo-Json -Depth 8 | Set-Content -Path $testUserProfilePath -Encoding UTF8
 
 function global:winget {
     switch ($args[0]) {
@@ -98,17 +110,17 @@ function global:fzf {
 }
 
 $runtimeList = (& (Join-Path $root "win.ps1") list | Out-String -Width 4096)
-if ($runtimeList -notmatch "PowerShell 7" -or $runtimeList -notmatch "junegunn.fzf" -or $runtimeList -match "Tencent QQ") {
+if ($runtimeList -notmatch "PowerShell 7" -or $runtimeList -notmatch "junegunn.fzf" -or $runtimeList -match "Node.js") {
     throw "The default runtime profile contains personal software or is missing a runtime dependency."
 }
 $runtimeInstall = (& (Join-Path $root "win.ps1") install -DryRun 6>&1 | Out-String -Width 4096)
-if ($runtimeInstall -notmatch "Microsoft.PowerShell" -or $runtimeInstall -notmatch "junegunn.fzf" -or $runtimeInstall -match "Tencent.QQ") {
+if ($runtimeInstall -notmatch "Microsoft.PowerShell" -or $runtimeInstall -notmatch "junegunn.fzf" -or $runtimeInstall -match "Microsoft.VisualStudioCode") {
     throw "The default install route is not limited to Winenv runtime dependencies."
 }
 & (Join-Path $root "win.ps1") profile
-& (Join-Path $root "win.ps1") profile yangyus8
+& (Join-Path $root "win.ps1") profile $testUserProfilePath
 $personalList = (& (Join-Path $root "win.ps1") list 6>&1 | Out-String -Width 4096)
-if ($personalList -notmatch "yangyus8" -or $personalList -notmatch "Tencent QQ" -or $personalList -notmatch "Node.js") {
+if ($personalList -notmatch "test-user" -or $personalList -notmatch "Visual Studio Code" -or $personalList -notmatch "Node.js") {
     throw "The selected user profile was not layered over the runtime profile."
 }
 & (Join-Path $root "win.ps1") store powertoys -DryRun
@@ -147,15 +159,9 @@ if ($updatePlan -notmatch "winget upgrade --all" -or $updatePlan -notmatch "scoo
 & (Join-Path $root "win.ps1") cleanup -DryRun
 & (Join-Path $root "win.ps1") profile default
 $resetList = (& (Join-Path $root "win.ps1") list | Out-String -Width 4096)
-if ($resetList -match "Tencent QQ") {
+if ($resetList -match "Visual Studio Code") {
     throw "Disabling the user profile did not restore the runtime-only profile."
 }
-& (Join-Path $root "win.ps1") profile (Join-Path (Join-Path $root "profiles") "yangyus8.json")
-$localProfileList = (& (Join-Path $root "win.ps1") list 6>&1 | Out-String -Width 4096)
-if ($localProfileList -notmatch "User profile: @local" -or $localProfileList -notmatch "Tencent QQ") {
-    throw "A user profile imported from a local JSON file was not activated."
-}
-& (Join-Path $root "win.ps1") profile default
 if (Test-Path $testLocalAppData) {
     Remove-Item -Path $testLocalAppData -Recurse -Force
 }

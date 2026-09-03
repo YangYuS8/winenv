@@ -5,6 +5,7 @@
 *.log
 dist/
 node_modules/
+.winenv/
 
 # Windows artifacts
 Thumbs.db

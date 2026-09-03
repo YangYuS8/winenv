@@ -40,7 +40,6 @@ foreach ($file in $releaseFiles) {
 }
 
 Copy-Item -Path (Join-Path $root "migrations") -Destination $stage -Recurse
-Copy-Item -Path (Join-Path $root "profiles") -Destination $stage -Recurse
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $archivePath -CompressionLevel Optimal
 
 $hash = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()

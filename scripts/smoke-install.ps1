@@ -8,13 +8,34 @@ if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
     $testRoot = Join-Path $env:RUNNER_TEMP "winenv-smoke"
 }
 
+New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+$smokeProfilePath = Join-Path $testRoot "smoke-user-profile.json"
+@'
+{
+  "schemaVersion": 1,
+  "name": "smoke-user",
+  "defaultProfiles": ["personal"],
+  "scoopBuckets": [],
+  "packages": [
+    {
+      "key": "terminal",
+      "displayName": "Windows Terminal",
+      "owner": "winget",
+      "id": "Microsoft.WindowsTerminal",
+      "source": "winget",
+      "profiles": ["personal"],
+      "commands": ["wt"]
+    }
+  ]
+}
+'@ | Set-Content -Path $smokeProfilePath -Encoding UTF8
+
 $env:LOCALAPPDATA = $testRoot
-& (Join-Path $root "install.ps1") -Version $expectedVersion -UserProfile yangyus8 -ToolOnly -Force
+& (Join-Path $root "install.ps1") -Version $expectedVersion -UserProfile $smokeProfilePath -ToolOnly -Force
 
 $installedEntry = Join-Path $testRoot "Winenv\versions\$expectedVersion\win.ps1"
 $launcherEntry = Join-Path $testRoot "Winenv\bin\win-launch.ps1"
-$installedUserProfile = Join-Path $testRoot "Winenv\versions\$expectedVersion\profiles\yangyus8.json"
-if (-not (Test-Path $installedEntry) -or -not (Test-Path $launcherEntry) -or -not (Test-Path $installedUserProfile)) {
+if (-not (Test-Path $installedEntry) -or -not (Test-Path $launcherEntry)) {
     throw "The release installer did not create the expected files."
 }
 
@@ -25,7 +46,7 @@ if ($installedVersion -ne $expectedVersion -or $launcherVersion -ne $expectedVer
 }
 
 $activeProfile = (& $installedEntry list 6>&1 | Out-String -Width 4096)
-if ($activeProfile -notmatch "winenv-runtime \+ yangyus8" -or $activeProfile -notmatch "Tencent QQ" -or $activeProfile -notmatch "junegunn.fzf") {
+if ($activeProfile -notmatch "winenv-runtime \+ smoke-user" -or $activeProfile -notmatch "Windows Terminal" -or $activeProfile -notmatch "junegunn.fzf") {
     throw "The installer did not activate the requested user profile over the runtime profile."
 }
 

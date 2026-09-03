@@ -14,7 +14,7 @@ Winenv 自己不建立第四套软件仓库：
 - 更新和卸载读取各管理器当前的真实状态；
 - 内置 `profile.json` 只保存 Winenv 正常运行所需的软件；个人选择放在独立用户 profile 中。
 
-可选的 `yangyus8` 用户 profile 参考了维护者这台 Omarchy 电脑的实际使用习惯：
+用户可以在自己的私有 profile 中采用类似 Omarchy 的默认归属策略：
 
 - 普通 Windows 应用交给 WinGet；
 - 便携命令行工具交给 Scoop；
@@ -38,10 +38,10 @@ irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1 | iex
 4. 建立全局短命令 `win`；
 5. 只安装 `profile.json` 中的 Winenv 运行依赖：PowerShell 7 和 fzf。
 
-维护者本人可以在首次安装时显式叠加个人 profile；这不会成为其他用户的默认行为：
+如果已经在本地准备了私有用户 profile，可以在首次安装时显式导入：
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1))) -UserProfile yangyus8
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1))) -UserProfile C:\Users\me\my-winenv.json
 ```
 
 如果只想安装 `win` 命令、暂时不安装清单中的软件：
@@ -75,7 +75,7 @@ win ls
 
 # 查看、启用或停用用户 profile
 win profile
-win profile yangyus8
+win profile C:\Users\me\my-winenv.json
 win profile default
 
 # 检查管理器、清单冲突以及命令解析路径
@@ -130,16 +130,14 @@ win clean
 - PowerShell 7：稳定运行命令及详情预览；
 - fzf：提供交互式搜索、选择和卸载界面。
 
-`profiles/yangyus8.json` 是独立、可选的维护者用户层，包含 `base`、`desktop`、`china`、`gaming`、`cli`、`development`，以及默认不启用的 `editor`。它只有在明确执行 `win profile yangyus8` 或给安装器传入 `-UserProfile yangyus8` 时才会叠加。
-
-其他用户可以按同一 schema 编写自己的 JSON，然后导入一份稳定副本：
+用户可以按同一 schema 在仓库外编写自己的私有 JSON，然后导入一份稳定副本：
 
 ```powershell
 win profile C:\Users\me\my-winenv.json
 win add
 ```
 
-选择保存在 `%LOCALAPPDATA%\Winenv\config.json`；本地 JSON 会复制到 Winenv 状态目录，因此不依赖原文件继续存在。`win profile default` 会回到纯运行时层，但切换 profile 只改变以后由 Winenv 应用的基线，不会擅自卸载已经安装的软件。
+公开仓库和 Release 不携带任何维护者个人清单。导入后的副本保存在 `%LOCALAPPDATA%\Winenv\user-profile.json`，选择状态保存在 `%LOCALAPPDATA%\Winenv\config.json`，因此不依赖原文件继续存在。`win profile default` 会回到纯运行时层，但切换 profile 只改变以后由 Winenv 应用的基线，不会擅自卸载已经安装的软件。
 
 可在命令行临时选择 profiles：
 
@@ -169,7 +167,6 @@ winenv/
 ├── VERSION              # Actions 自动维护的版本
 ├── profile.json         # 仅包含 Winenv 运行依赖
 ├── profile.schema.json  # 清单结构
-├── profiles/            # 可选用户 profile；默认不启用
 ├── migrations/          # 只执行一次的演进脚本
 ├── scripts/             # 测试和发布资产构建
 └── .github/workflows/   # CI 与自动发布
