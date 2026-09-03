@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("list", "ls", "profile", "store", "browse", "search", "find", "info", "show", "doctor", "check", "install", "add", "update", "up", "remove", "rm", "cleanup", "clean", "migrate", "version", "self-update", "selfup")]
+    [ValidateSet("list", "ls", "use", "unuse", "profile", "store", "browse", "search", "find", "info", "show", "doctor", "check", "install", "add", "update", "up", "remove", "rm", "cleanup", "clean", "migrate", "version", "self-update", "selfup")]
     [string]$Action = "list",
 
     [string[]]$Profiles,
@@ -102,14 +102,65 @@ function Test-Command {
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
-function Read-ProfileFile {
-    param([string]$Path)
-    if (-not (Test-Path $Path)) { throw "Profile not found: $Path" }
-    $definition = Get-Content -Raw -Path $Path | ConvertFrom-Json
+function ConvertFrom-ProfileText {
+    param(
+        [string]$Text,
+        [string]$Source
+    )
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        throw "Profile is empty: $Source"
+    }
+    if ([Text.Encoding]::UTF8.GetByteCount($Text) -gt 1MB) {
+        throw "Profile is larger than 1 MiB: $Source"
+    }
+    try {
+        $definition = $Text | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Profile is not valid JSON: $Source"
+    }
+    if ($definition -isnot [pscustomobject]) {
+        throw "Profile root must be a JSON object: $Source"
+    }
     if ($definition.schemaVersion -ne 1) {
         throw "Unsupported profile schema version: $($definition.schemaVersion)"
     }
     return $definition
+}
+
+function Read-ProfileFile {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { throw "Profile not found: $Path" }
+    return (ConvertFrom-ProfileText (Get-Content -Raw -Path $Path) $Path)
+}
+
+function Read-UserProfileSource {
+    param([string]$Source)
+
+    if ($Source -match "^https://") {
+        Write-Step "Downloading shared profile"
+        $response = Invoke-WebRequest -Uri $Source -UseBasicParsing -Headers @{
+            "Accept" = "application/json"
+            "User-Agent" = "winenv"
+        }
+        $text = if ($response.Content -is [byte[]]) {
+            [Text.Encoding]::UTF8.GetString($response.Content)
+        } else {
+            [string]$response.Content
+        }
+        return [pscustomobject]@{ Text = $text; Label = $Source }
+    }
+
+    if ($Source -match "^[a-zA-Z][a-zA-Z0-9+.-]*://") {
+        throw "Shared profiles must use HTTPS: $Source"
+    }
+    if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
+        throw "User profile JSON was not found: $Source"
+    }
+    $resolvedPath = (Resolve-Path -LiteralPath $Source).Path
+    return [pscustomobject]@{
+        Text = Get-Content -Raw -Path $resolvedPath
+        Label = $resolvedPath
+    }
 }
 
 function Read-WinenvConfig {
@@ -132,7 +183,7 @@ function Resolve-ActiveUserProfilePath {
     param([string]$Selection)
     if ([string]::IsNullOrWhiteSpace($Selection)) { return $null }
     if ($Selection -eq "@local") { return $LocalUserProfilePath }
-    throw "Unsupported user profile selection in $ConfigPath. Run 'win profile default' to reset it."
+    throw "Unsupported user profile selection in $ConfigPath. Run 'win unuse' to reset it."
 }
 
 function Merge-ProfileDefinitions {
@@ -166,42 +217,73 @@ function Show-UserProfileStatus {
     if (Test-Path $LocalUserProfilePath) {
         Write-Host "Private copy:    $LocalUserProfilePath"
     }
-    Write-Host "`nUse 'win profile <json-path>' to import one, or 'win profile default' to disable it." -ForegroundColor DarkGray
+    Write-Host "`nUse 'win use <json-path-or-https-url>' to apply one, or 'win unuse' to disable it." -ForegroundColor DarkGray
 }
 
 function Set-UserProfile {
+    param([switch]$Apply)
+
     if ([string]::IsNullOrWhiteSpace($Target)) {
         Show-UserProfileStatus
         return
     }
     if ($Target -in @("default", "none", "off")) {
-        Write-WinenvConfig ""
-        Write-Host "User profile disabled; Winenv will use only its runtime profile." -ForegroundColor Green
+        Disable-UserProfile -AllowAliasTarget
         return
     }
 
-    if (-not (Test-Path -LiteralPath $Target -PathType Leaf)) {
-        throw "User profile JSON was not found: $Target"
-    }
-    $candidatePath = (Resolve-Path -LiteralPath $Target).Path
-    $selection = "@local"
-
+    $source = Read-UserProfileSource $Target
     $runtimeProfile = Read-ProfileFile $ProfilePath
-    $userProfile = Read-ProfileFile $candidatePath
+    $userProfile = ConvertFrom-ProfileText $source.Text $source.Label
+    Assert-ProfileDefinition $userProfile
     $merged = Merge-ProfileDefinitions $runtimeProfile $userProfile
     Assert-ProfileDefinition $merged
 
-    if ($selection -eq "@local") {
-        Write-Plan "Copy $candidatePath to $LocalUserProfilePath"
-        if (-not $DryRun) {
-            New-Item -ItemType Directory -Path $StateRoot -Force | Out-Null
-            if ([IO.Path]::GetFullPath($candidatePath) -ine [IO.Path]::GetFullPath($LocalUserProfilePath)) {
-                Copy-Item -LiteralPath $candidatePath -Destination $LocalUserProfilePath -Force
-            }
+    if ($Apply) {
+        $selectedPackages = @(Get-SelectedPackages $merged)
+        Write-Step "Profile preview"
+        Write-Host "Name:   $($userProfile.name)"
+        Write-Host "Source: $($source.Label)"
+        Write-Host "Install: $($selectedPackages.Count) packages from the runtime and user defaults"
+        $selectedPackages |
+            Select-Object displayName, owner, id, @{Name = "profiles"; Expression = { $_.profiles -join "," }} |
+            Sort-Object owner, displayName |
+            Format-Table -AutoSize
+        if (-not (Confirm-Operation "Activate this profile and install the packages shown above?")) {
+            Write-Host "Profile activation cancelled."
+            return
         }
     }
-    Write-WinenvConfig $selection
-    Write-Host "User profile '$($userProfile.name)' is active. Run 'win add' to apply it." -ForegroundColor Green
+
+    Write-Plan "Save a stable snapshot to $LocalUserProfilePath"
+    if (-not $DryRun) {
+        New-Item -ItemType Directory -Path $StateRoot -Force | Out-Null
+        Set-Content -Path $LocalUserProfilePath -Value $source.Text -Encoding UTF8
+    }
+    Write-WinenvConfig "@local"
+
+    if (-not $Apply) {
+        Write-Host "User profile '$($userProfile.name)' is active. Run 'win add' to apply it." -ForegroundColor Green
+        return
+    }
+
+    Install-Packages $merged $selectedPackages
+    Invoke-Migrations
+    Write-Host "`nUser profile '$($userProfile.name)' is active and installed." -ForegroundColor Green
+}
+
+function Disable-UserProfile {
+    param([switch]$AllowAliasTarget)
+
+    if (-not $AllowAliasTarget -and -not [string]::IsNullOrWhiteSpace($Target)) {
+        throw "unuse does not accept a target. Run 'win unuse'."
+    }
+    Write-WinenvConfig ""
+    if ($DryRun) {
+        Write-Host "User profile would be disabled; installed software would be kept."
+    } else {
+        Write-Host "User profile disabled; installed software was kept." -ForegroundColor Green
+    }
 }
 
 function Get-SelectedProfiles {
@@ -648,26 +730,81 @@ function Assert-ProfileDefinition {
     $seenPackages = @{}
     $commandOwners = @{}
 
+    $definitionProperties = @("`$schema", "schemaVersion", "name", "defaultProfiles", "scoopBuckets", "packages")
+    $packageProperties = @("key", "displayName", "owner", "id", "source", "bucket", "version", "profiles", "commands", "instructions")
+    $definitionPropertyNames = @($Definition.psobject.Properties.Name)
+    $requiredDefinitionProperties = @("schemaVersion", "name", "defaultProfiles", "scoopBuckets", "packages")
+
+    if ($Definition.schemaVersion -ne 1) { $errors.Add("schemaVersion must be 1") }
+    if ([string]::IsNullOrWhiteSpace([string]$Definition.name)) { $errors.Add("name is required") }
+    foreach ($property in $requiredDefinitionProperties) {
+        if ($definitionPropertyNames -notcontains $property) { $errors.Add("Missing profile property: $property") }
+    }
+    foreach ($property in $definitionPropertyNames) {
+        if ($definitionProperties -notcontains $property) { $errors.Add("Unsupported profile property: $property") }
+    }
+    foreach ($collectionName in @("defaultProfiles", "scoopBuckets")) {
+        $items = @($Definition.$collectionName)
+        if (@($items | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) {
+            $errors.Add("$collectionName contains an empty value")
+        }
+        if (@($items | Group-Object | Where-Object Count -gt 1).Count -gt 0) {
+            $errors.Add("$collectionName contains duplicate values")
+        }
+    }
+
     foreach ($package in @($Definition.packages)) {
-        if ($AllowedOwners -notcontains $package.owner) {
-            $errors.Add("$($package.key): unsupported owner '$($package.owner)'")
+        $key = [string]$package.key
+        $owner = [string]$package.owner
+        $id = [string]$package.id
+        $packagePropertyNames = @($package.psobject.Properties.Name)
+        foreach ($property in @("key", "displayName", "owner", "id", "profiles", "commands")) {
+            if ($packagePropertyNames -notcontains $property) { $errors.Add("$key`: missing package property '$property'") }
+        }
+        foreach ($property in $packagePropertyNames) {
+            if ($packageProperties -notcontains $property) { $errors.Add("$key`: unsupported package property '$property'") }
+        }
+        if ($key -notmatch "^[a-z0-9][a-z0-9-]*$") { $errors.Add("Invalid package key: '$key'") }
+        if ([string]::IsNullOrWhiteSpace([string]$package.displayName)) { $errors.Add("$key`: displayName is required") }
+        if ([string]::IsNullOrWhiteSpace($id)) { $errors.Add("$key`: id is required") }
+        if ($AllowedOwners -notcontains $owner) {
+            $errors.Add("$key`: unsupported owner '$owner'")
+        }
+        $packageProfiles = @($package.profiles)
+        if ($packageProfiles.Count -eq 0 -or @($packageProfiles | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) {
+            $errors.Add("$key`: at least one non-empty profile is required")
+        }
+        if (@($packageProfiles | Group-Object | Where-Object Count -gt 1).Count -gt 0) {
+            $errors.Add("$key`: profiles contains duplicate values")
+        }
+        $commands = @($package.commands)
+        if (@($commands | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) {
+            $errors.Add("$key`: commands contains an empty value")
+        }
+        if (@($commands | Group-Object | Where-Object Count -gt 1).Count -gt 0) {
+            $errors.Add("$key`: commands contains duplicate values")
         }
 
-        if ($seenKeys.ContainsKey($package.key)) {
-            $errors.Add("Duplicate package key: $($package.key)")
-        } else {
-            $seenKeys[$package.key] = $true
+        if (-not [string]::IsNullOrWhiteSpace($key)) {
+            if ($seenKeys.ContainsKey($key)) {
+                $errors.Add("Duplicate package key: $key")
+            } else {
+                $seenKeys[$key] = $true
+            }
         }
 
-        $identity = "$($package.owner):$($package.id)".ToLowerInvariant()
-        if ($seenPackages.ContainsKey($identity)) {
-            $errors.Add("Duplicate managed package: $identity")
-        } else {
-            $seenPackages[$identity] = $true
+        if (-not [string]::IsNullOrWhiteSpace($owner) -and -not [string]::IsNullOrWhiteSpace($id)) {
+            $identity = "$owner`:$id".ToLowerInvariant()
+            if ($seenPackages.ContainsKey($identity)) {
+                $errors.Add("Duplicate managed package: $identity")
+            } else {
+                $seenPackages[$identity] = $true
+            }
         }
 
-        foreach ($command in @($package.commands)) {
-            $normalizedCommand = $command.ToLowerInvariant()
+        foreach ($command in $commands) {
+            $normalizedCommand = ([string]$command).ToLowerInvariant()
+            if ([string]::IsNullOrWhiteSpace($normalizedCommand)) { continue }
             if ($commandOwners.ContainsKey($normalizedCommand) -and $commandOwners[$normalizedCommand] -ne $package.owner) {
                 $errors.Add("Command '$command' has multiple owners: $($commandOwners[$normalizedCommand]) and $($package.owner)")
             } else {
@@ -1068,8 +1205,13 @@ function Invoke-Cleanup {
     }
 }
 
-if ($Action -eq "profile") {
-    Set-UserProfile
+if ($Action -in @("profile", "use")) {
+    Set-UserProfile -Apply:($Action -eq "use")
+    return
+}
+
+if ($Action -eq "unuse") {
+    Disable-UserProfile
     return
 }
 

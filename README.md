@@ -38,10 +38,11 @@ irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1 | iex
 4. 建立全局短命令 `win`；
 5. 只安装 `profile.json` 中的 Winenv 运行依赖：PowerShell 7 和 fzf。
 
-如果已经在本地准备了私有用户 profile，可以在首次安装时显式导入：
+如果已经准备了用户 profile，可以在首次安装时从本地文件或 HTTPS 链接导入：
 
 ```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1))) -UserProfile C:\Users\me\my-winenv.json
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1))) -UserProfile https://example.com/my-winenv.json
 ```
 
 如果只想安装 `win` 命令、暂时不安装清单中的软件：
@@ -73,10 +74,11 @@ win find node -Manager mise
 # 查看归属和当前选中的 profiles
 win ls
 
-# 查看、启用或停用用户 profile
-win profile
-win profile C:\Users\me\my-winenv.json
-win profile default
+# 查看、启用或停用用户 profile；链接也可以来自 GitHub Raw 或 Gist
+win use
+win use C:\Users\me\my-winenv.json
+win use https://example.com/my-winenv.json
+win unuse
 
 # 检查管理器、清单冲突以及命令解析路径
 win doctor
@@ -130,14 +132,16 @@ win clean
 - PowerShell 7：稳定运行命令及详情预览；
 - fzf：提供交互式搜索、选择和卸载界面。
 
-用户可以按同一 schema 在仓库外编写自己的私有 JSON，然后导入一份稳定副本：
+用户可以按同一 schema 在仓库外编写 JSON。它既可以只留在自己电脑上，也可以放在 GitHub、Gist 或自己的站点上分享：
 
 ```powershell
-win profile C:\Users\me\my-winenv.json
-win add
+win use C:\Users\me\my-winenv.json
+win use https://raw.githubusercontent.com/user/dotfiles/main/winenv.json
 ```
 
-公开仓库和 Release 不携带任何维护者个人清单。导入后的副本保存在 `%LOCALAPPDATA%\Winenv\user-profile.json`，选择状态保存在 `%LOCALAPPDATA%\Winenv\config.json`，因此不依赖原文件继续存在。`win profile default` 会回到纯运行时层，但切换 profile 只改变以后由 Winenv 应用的基线，不会擅自卸载已经安装的软件。
+`win use` 会校验 profile、展示将安装的软件并请求确认，然后在一次命令里完成启用和安装。远程 profile 只接受 HTTPS；导入后的内容会保存为 `%LOCALAPPDATA%\Winenv\user-profile.json` 中的稳定快照，选择状态保存在 `%LOCALAPPDATA%\Winenv\config.json`，因此不会因为原文件或在线链接随后变化而悄悄改变当前机器。
+
+Winenv 官方仓库和 Release 不携带维护者个人清单，也不需要维护一份社区 profile 目录。任何人都可以独立发布自己的配置并分享链接。`win unuse` 会回到纯运行时层，但不会擅自卸载已经安装的软件。
 
 可在命令行临时选择 profiles：
 

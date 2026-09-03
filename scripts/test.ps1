@@ -108,6 +108,17 @@ function global:fzf {
         $rows | Where-Object { $_ -match "^winget:winget/Microsoft\.PowerToys`t" } | Select-Object -First 1
     }
 }
+function global:Invoke-WebRequest {
+    param(
+        [string]$Uri,
+        [switch]$UseBasicParsing,
+        [hashtable]$Headers
+    )
+    if ($Uri -ne "https://profiles.example/test.json") {
+        throw "Unexpected test URL: $Uri"
+    }
+    return [pscustomobject]@{ Content = Get-Content -Raw -Path $testUserProfilePath }
+}
 
 $runtimeList = (& (Join-Path $root "win.ps1") list | Out-String -Width 4096)
 if ($runtimeList -notmatch "PowerShell 7" -or $runtimeList -notmatch "junegunn.fzf" -or $runtimeList -match "Node.js") {
@@ -117,8 +128,12 @@ $runtimeInstall = (& (Join-Path $root "win.ps1") install -DryRun 6>&1 | Out-Stri
 if ($runtimeInstall -notmatch "Microsoft.PowerShell" -or $runtimeInstall -notmatch "junegunn.fzf" -or $runtimeInstall -match "Microsoft.VisualStudioCode") {
     throw "The default install route is not limited to Winenv runtime dependencies."
 }
-& (Join-Path $root "win.ps1") profile
-& (Join-Path $root "win.ps1") profile $testUserProfilePath
+& (Join-Path $root "win.ps1") use
+$remoteUsePlan = (& (Join-Path $root "win.ps1") use "https://profiles.example/test.json" -DryRun -Yes 6>&1 | Out-String -Width 4096)
+if ($remoteUsePlan -notmatch "Profile preview" -or $remoteUsePlan -notmatch "Microsoft.VisualStudioCode" -or $remoteUsePlan -notmatch "scoop install main/ripgrep" -or $remoteUsePlan -notmatch "mise use --global node@26") {
+    throw "The shared-profile use route did not preview and plan the complete installation."
+}
+& (Join-Path $root "win.ps1") profile "https://profiles.example/test.json"
 $personalList = (& (Join-Path $root "win.ps1") list 6>&1 | Out-String -Width 4096)
 if ($personalList -notmatch "test-user" -or $personalList -notmatch "Visual Studio Code" -or $personalList -notmatch "Node.js") {
     throw "The selected user profile was not layered over the runtime profile."
@@ -157,7 +172,7 @@ if ($updatePlan -notmatch "winget upgrade --all" -or $updatePlan -notmatch "scoo
 & (Join-Path $root "win.ps1") remove vscode -DryRun
 & (Join-Path $root "win.ps1") remove powertoys -DryRun
 & (Join-Path $root "win.ps1") cleanup -DryRun
-& (Join-Path $root "win.ps1") profile default
+& (Join-Path $root "win.ps1") unuse
 $resetList = (& (Join-Path $root "win.ps1") list | Out-String -Width 4096)
 if ($resetList -match "Visual Studio Code") {
     throw "Disabling the user profile did not restore the runtime-only profile."
