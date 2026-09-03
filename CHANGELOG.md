@@ -1,3 +1,10 @@
+# [0.3.0](https://github.com/YangYuS8/winenv/compare/v0.2.1...v0.3.0) (2026-09-03)
+
+
+### Features
+
+* add an interactive package store ([989254e](https://github.com/YangYuS8/winenv/commit/989254e31ed44bfa8ba8291735bb85fa5d487f32))
+
 ## [0.2.1](https://github.com/YangYuS8/winenv/compare/v0.2.0...v0.2.1) (2026-09-02)
 
 
