@@ -1,3 +1,10 @@
+# [0.5.0](https://github.com/YangYuS8/winenv/compare/v0.4.1...v0.5.0) (2026-09-03)
+
+
+### Features
+
+* separate runtime and user profiles ([552ad49](https://github.com/YangYuS8/winenv/commit/552ad497fa213b1c5f739c2a09a5d020557c9bc6))
+
 ## [0.4.1](https://github.com/YangYuS8/winenv/compare/v0.4.0...v0.4.1) (2026-09-03)
 
 
