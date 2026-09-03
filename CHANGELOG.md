@@ -1,3 +1,10 @@
+# [0.9.0](https://github.com/YangYuS8/winenv/compare/v0.8.0...v0.9.0) (2026-09-03)
+
+
+### Features
+
+* reuse compatible prerequisites ([fcdf8cd](https://github.com/YangYuS8/winenv/commit/fcdf8cd59481bb4cac84ccb6b7dd31362b8f71fc))
+
 # [0.8.0](https://github.com/YangYuS8/winenv/compare/v0.7.0...v0.8.0) (2026-09-03)
 
 
