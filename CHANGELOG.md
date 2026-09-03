@@ -1,3 +1,10 @@
+# [0.13.0](https://github.com/YangYuS8/winenv/compare/v0.12.0...v0.13.0) (2026-09-03)
+
+
+### Features
+
+* add automated documentation site ([7f6ce96](https://github.com/YangYuS8/winenv/commit/7f6ce962101d9cb3efd12209aaeb93cb58a22877))
+
 # [0.12.0](https://github.com/YangYuS8/winenv/compare/v0.11.0...v0.12.0) (2026-09-03)
 
 
