@@ -6,6 +6,9 @@
 dist/
 node_modules/
 .winenv/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+docs/changelog.md
 
 # Windows artifacts
 Thumbs.db

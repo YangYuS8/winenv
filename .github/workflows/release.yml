@@ -35,6 +35,9 @@ jobs:
       - name: Verify dependency signatures
         run: npm audit signatures
 
+      - name: Build documentation
+        run: npm run docs:build
+
       - name: Test
         shell: pwsh
         run: ./scripts/test.ps1
