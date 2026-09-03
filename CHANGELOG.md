@@ -1,3 +1,10 @@
+# [0.14.0](https://github.com/YangYuS8/winenv/compare/v0.13.0...v0.14.0) (2026-09-03)
+
+
+### Features
+
+* add English-first internationalization ([66ef853](https://github.com/YangYuS8/winenv/commit/66ef8539d60b9053ed843c109b8d9354fc4d869c))
+
 # [0.13.0](https://github.com/YangYuS8/winenv/compare/v0.12.0...v0.13.0) (2026-09-03)
 
 
