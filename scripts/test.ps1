@@ -124,7 +124,7 @@ if ([string]::IsNullOrWhiteSpace([string]$reportedVersion)) {
 & (Join-Path $root "win.ps1") install "scoop:extras/powertoys" -DryRun
 & (Join-Path $root "win.ps1") install powertoys -DryRun
 $updatePlan = (& (Join-Path $root "win.ps1") update -DryRun 6>&1 | Out-String -Width 4096)
-if ($updatePlan -notmatch "winget upgrade --all" -or $updatePlan -notmatch "scoop update \*" -or $updatePlan -notmatch "mise up --no-prune") {
+if ($updatePlan -notmatch "winget upgrade --all" -or $updatePlan -notmatch "scoop update \*" -or $updatePlan -notmatch "mise up") {
     throw "The update route did not delegate the full inventory to each package manager."
 }
 & (Join-Path $root "win.ps1") remove vscode -DryRun

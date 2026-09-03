@@ -900,7 +900,7 @@ function Update-All {
         $previousAge = $env:MISE_MINIMUM_RELEASE_AGE
         try {
             $env:MISE_MINIMUM_RELEASE_AGE = "0"
-            Invoke-Native "mise" @("up", "--no-prune")
+            Invoke-Native "mise" @("up")
         } finally {
             $env:MISE_MINIMUM_RELEASE_AGE = $previousAge
         }

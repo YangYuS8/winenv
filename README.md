@@ -19,7 +19,7 @@ Winenv 自己不建立第四套软件仓库：
 - 普通 Windows 应用交给 WinGet；
 - 便携命令行工具交给 Scoop；
 - 需要版本控制的开发工具交给 mise；
-- Scoop 清理和 mise 旧版本清理不会混在普通更新中自动执行；
+- Scoop 的旧版本由 `win clean` 显式清理，mise 则遵循自身带宽限期的自动清理策略；
 - 系统演进通过一次性 migration 脚本完成。
 
 ## 第一次使用
@@ -100,7 +100,7 @@ win rm powertoys
 win rm
 win rm scoop:extras/powertoys
 
-# 显式清理 Scoop 和 mise 保留的旧版本
+# 立即清理 Scoop 旧版本以及 mise 当前未再引用的版本
 win clean
 ```
 
@@ -110,7 +110,7 @@ win clean
 
 `search` 不维护容易过期的远程索引，而是把三个管理器的实时结果转换成统一表格。WinGet 和 Scoop 都有同一个软件时，两行都会保留，Winenv 不会静默替你猜一个。每行会给出可直接执行的 `win add` 命令，清单外结果使用包含管理器与仓库的来源令牌；只有希望在下一台新机自动复现的软件，才需要以后加入 `profile.json`。使用 `-Manager managed|winget|scoop|mise` 可以缩小搜索范围。
 
-`update` 会先更新 Winenv 本身，再调用 `winget upgrade --all`、`scoop update *` 和 `mise up --no-prune`，因此管理器中已经登记、但不在 profile 的软件也会更新。它尊重 WinGet pin、Scoop hold 和 mise 配置；mise 的旧版本不会被这次更新安排自动删除，仍由 `win clean` 显式清理。更新前会展示范围；除非传入 `-Yes`，否则会要求确认。
+`update` 会先更新 Winenv 本身，再调用 `winget upgrade --all`、`scoop update *` 和 `mise up`，因此管理器中已经登记、但不在 profile 的软件也会更新。它尊重 WinGet pin、Scoop hold 和 mise 配置。mise 会按自己的宽限期清理已被升级替换、且不再被任何配置引用的旧版本；真正需要保留的版本应在全局或项目 mise 配置中明确指定。`win clean` 只是用于立即执行清理。更新前会展示范围；除非传入 `-Yes`，否则会要求确认。
 
 ## 默认 profiles
 
@@ -200,7 +200,7 @@ chore: 更新维护配置                         # 不发布
 - 修改 Defender、BitLocker、Windows Update 策略；
 - 自动安装驱动；
 - 保存登录令牌和软件私有数据；
-- 自动清理所有旧版本。
+- 绕过各包管理器自身的保留、pin、hold 或清理策略。
 
 这些能力只有在个人使用稳定之后，才值得逐项加入。
 
