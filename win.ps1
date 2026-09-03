@@ -25,6 +25,7 @@ $StateRoot = Join-Path $env:LOCALAPPDATA "Winenv"
 $StatePath = Join-Path $StateRoot "state.json"
 $ConfigPath = Join-Path $StateRoot "config.json"
 $LocalUserProfilePath = Join-Path $StateRoot "user-profile.json"
+$ProfilesRoot = Join-Path $StateRoot "profiles"
 $AllowedOwners = @("winget", "scoop", "mise", "vendor")
 $ActionAliases = @{
     "ls" = "list"
@@ -88,9 +89,9 @@ Winenv keeps Windows software simple.
   win add [software]   Apply the profile, or install one known package
   win rm [software]    Select and remove installed software
   win up               Update Winenv and all managed software
-  win use <file|url>   Activate and install a user profile
-  win off              Disable the user profile without uninstalling
-  win ls               Show the active profile
+  win use <file|url>   Add, refresh, and install a profile
+  win off [profile]    Disable one profile without uninstalling
+  win ls               Show profiles and effective packages
   win find <software>  Print search results without opening the picker
   win show <software>  Show package ownership and details
   win check            Check managers and command conflicts
@@ -187,7 +188,19 @@ function Read-UserProfileSource {
         } else {
             [string]$response.Content
         }
-        return [pscustomobject]@{ Text = $text; Label = $Source }
+        $uri = [Uri]$Source
+        $displayUri = [UriBuilder]$uri
+        $displayUri.UserName = ""
+        $displayUri.Password = ""
+        $displayUri.Query = ""
+        $displayUri.Fragment = ""
+        $canonicalUri = $displayUri.Uri.AbsoluteUri
+        return [pscustomobject]@{
+            Text = $text
+            Label = $canonicalUri
+            Key = "url:$canonicalUri"
+            Type = "url"
+        }
     }
 
     if ($Source -match "^[a-zA-Z][a-zA-Z0-9+.-]*://") {
@@ -200,64 +213,415 @@ function Read-UserProfileSource {
     return [pscustomobject]@{
         Text = Get-Content -Raw -Path $resolvedPath
         Label = $resolvedPath
+        Key = "file:$resolvedPath"
+        Type = "file"
     }
+}
+
+function Get-TextHash {
+    param([string]$Text)
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Text)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+    }
+}
+
+function New-WinenvConfig {
+    return [pscustomobject]@{
+        schemaVersion = 2
+        profiles = @()
+        resolutions = @()
+        legacy = $false
+    }
+}
+
+function Get-ProfileId {
+    param(
+        [string]$Name,
+        [string]$SourceKey
+    )
+    $slug = ([regex]::Replace($Name.ToLowerInvariant(), "[^a-z0-9]+", "-")).Trim("-")
+    if ([string]::IsNullOrWhiteSpace($slug)) { $slug = "profile" }
+    if ($slug.Length -gt 32) { $slug = $slug.Substring(0, 32).TrimEnd("-") }
+    return "$slug-$((Get-TextHash $SourceKey).Substring(0, 10))"
 }
 
 function Read-WinenvConfig {
-    if (-not (Test-Path $ConfigPath)) { return [pscustomobject]@{ userProfile = "" } }
-    $config = Get-Content -Raw -Path $ConfigPath | ConvertFrom-Json
-    return [pscustomobject]@{ userProfile = [string]$config.userProfile }
+    if (-not (Test-Path $ConfigPath)) { return New-WinenvConfig }
+    try {
+        $stored = Get-Content -Raw -Path $ConfigPath | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Winenv config is not valid JSON: $ConfigPath"
+    }
+
+    if ($stored.schemaVersion -eq 2) {
+        return [pscustomobject]@{
+            schemaVersion = 2
+            profiles = @($stored.profiles)
+            resolutions = @($stored.resolutions)
+            legacy = $false
+        }
+    }
+
+    $config = New-WinenvConfig
+    $config.legacy = $true
+    if ([string]$stored.userProfile -eq "@local" -and (Test-Path $LocalUserProfilePath)) {
+        $profile = Read-ProfileFile $LocalUserProfilePath
+        $sourceKey = "legacy:@local"
+        $id = Get-ProfileId $profile.name $sourceKey
+        $config.profiles = @([pscustomobject]@{
+            id = $id
+            name = [string]$profile.name
+            source = $sourceKey
+            sourceType = "legacy"
+            fileName = ""
+            hash = Get-TextHash (Get-Content -Raw -Path $LocalUserProfilePath)
+            enabled = $true
+            addedAt = [DateTime]::UtcNow.ToString("o")
+            updatedAt = [DateTime]::UtcNow.ToString("o")
+        })
+    }
+    return $config
 }
 
 function Write-WinenvConfig {
-    param([string]$UserProfile)
-    Write-Plan "Set active user profile to '$UserProfile' in $ConfigPath"
+    param($Config)
+    Write-Plan "Save profile registry to $ConfigPath"
     if ($DryRun) { return }
     New-Item -ItemType Directory -Path $StateRoot -Force | Out-Null
-    [pscustomobject]@{ userProfile = $UserProfile } |
-        ConvertTo-Json |
-        Set-Content -Path $ConfigPath -Encoding UTF8
-}
-
-function Resolve-ActiveUserProfilePath {
-    param([string]$Selection)
-    if ([string]::IsNullOrWhiteSpace($Selection)) { return $null }
-    if ($Selection -eq "@local") { return $LocalUserProfilePath }
-    throw "Unsupported user profile selection in $ConfigPath. Run 'win off' to reset it."
-}
-
-function Merge-ProfileDefinitions {
-    param(
-        $RuntimeProfile,
-        $UserProfile
-    )
-    if ($null -eq $UserProfile) { return $RuntimeProfile }
-    return [pscustomobject]@{
-        schemaVersion = 1
-        name = "$($RuntimeProfile.name) + $($UserProfile.name)"
-        defaultProfiles = @(@($RuntimeProfile.defaultProfiles) + @($UserProfile.defaultProfiles) | Select-Object -Unique)
-        scoopBuckets = @(@($RuntimeProfile.scoopBuckets) + @($UserProfile.scoopBuckets) | Select-Object -Unique)
-        packages = @(@($RuntimeProfile.packages) + @($UserProfile.packages))
+    $stored = [pscustomobject]@{
+        schemaVersion = 2
+        profiles = @($Config.profiles | ForEach-Object {
+            [pscustomobject]@{
+                id = [string]$_.id
+                name = [string]$_.name
+                source = [string]$_.source
+                sourceType = [string]$_.sourceType
+                fileName = [string]$_.fileName
+                hash = [string]$_.hash
+                enabled = [bool]$_.enabled
+                addedAt = [string]$_.addedAt
+                updatedAt = [string]$_.updatedAt
+            }
+        })
+        resolutions = @($Config.resolutions | ForEach-Object {
+            [pscustomobject]@{
+                key = [string]$_.key
+                selected = [string]$_.selected
+                updatedAt = [string]$_.updatedAt
+            }
+        })
     }
+    $stored | ConvertTo-Json -Depth 10 | Set-Content -Path $ConfigPath -Encoding UTF8
+}
+
+function Get-ProfileSnapshotPath {
+    param($Entry)
+    if ([string]::IsNullOrWhiteSpace([string]$Entry.fileName)) { return $LocalUserProfilePath }
+    $safeName = [IO.Path]::GetFileName([string]$Entry.fileName)
+    return Join-Path $ProfilesRoot $safeName
+}
+
+function Initialize-ProfileRegistry {
+    $config = Read-WinenvConfig
+    if (-not $config.legacy) { return }
+
+    Write-Step "Migrating the profile registry"
+    if ($DryRun) {
+        Write-Plan "Preserve the existing user profile as an independent snapshot"
+        return
+    }
+
+    New-Item -ItemType Directory -Path $ProfilesRoot -Force | Out-Null
+    foreach ($entry in @($config.profiles)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$entry.fileName)) { continue }
+        $entry.fileName = "$($entry.id).json"
+        Copy-Item -LiteralPath $LocalUserProfilePath -Destination (Get-ProfileSnapshotPath $entry) -Force
+    }
+    $config.legacy = $false
+    Write-WinenvConfig $config
+}
+
+function Copy-WinenvConfig {
+    param($Config)
+    return (($Config | ConvertTo-Json -Depth 20) | ConvertFrom-Json)
+}
+
+function Copy-PackageDefinition {
+    param($Package)
+    $properties = [ordered]@{}
+    foreach ($name in @("key", "displayName", "owner", "id", "source", "bucket", "version", "profiles", "commands", "provides", "instructions")) {
+        if ($Package.psobject.Properties.Name -contains $name) {
+            $properties[$name] = $Package.$name
+        }
+    }
+    return [pscustomobject]$properties
+}
+
+function Get-PackageIdentity {
+    param($Package)
+    $location = switch ([string]$Package.owner) {
+        "winget" { if ($Package.source) { [string]$Package.source } else { "winget" } }
+        "scoop" { if ($Package.bucket) { [string]$Package.bucket } else { "main" } }
+        "mise" { "mise" }
+        default { "vendor" }
+    }
+    return "$([string]$Package.owner)|$location|$([string]$Package.id)".ToLowerInvariant()
+}
+
+function Get-PackageSpecSignature {
+    param($Package)
+    return "$(Get-PackageIdentity $Package)|$([string]$Package.version)".ToLowerInvariant()
+}
+
+function Get-CandidateSelectionToken {
+    param($Candidate)
+    return "spec:$(Get-PackageSpecSignature $Candidate.Package)"
+}
+
+function New-PackageClaim {
+    param(
+        $Package,
+        $Entry,
+        $Profile,
+        [switch]$Runtime
+    )
+    $profileId = [string]$Entry.id
+    $packageProfiles = @($Package.profiles)
+    $defaultSelected = @($packageProfiles | Where-Object { @($Profile.defaultProfiles) -contains $_ }).Count -gt 0
+    return [pscustomobject]@{
+        Package = Copy-PackageDefinition $Package
+        Identity = Get-PackageIdentity $Package
+        Signature = Get-PackageSpecSignature $Package
+        Ref = "$profileId/$([string]$Package.key)"
+        ProfileId = $profileId
+        ProfileName = [string]$Entry.name
+        DefaultSelected = $defaultSelected
+        Groups = @($packageProfiles | ForEach-Object { "$profileId/$_" })
+        Runtime = [bool]$Runtime
+    }
+}
+
+function Get-ResolutionSelection {
+    param(
+        $Config,
+        [string]$Key,
+        [array]$CandidateGroups
+    )
+    $runtimeGroup = @($CandidateGroups | Where-Object { @($_.Claims | Where-Object Runtime).Count -gt 0 } | Select-Object -First 1)
+    if ($runtimeGroup.Count -gt 0) { return $runtimeGroup[0] }
+
+    $resolution = @($Config.resolutions | Where-Object { $_.key -eq $Key } | Select-Object -First 1)
+    if ($resolution.Count -eq 0) { return $null }
+    $selected = [string]$resolution[0].selected
+    $matches = @($CandidateGroups | Where-Object {
+        (Get-CandidateSelectionToken $_) -eq $selected -or @($_.Claims.Ref) -contains $selected
+    } | Select-Object -First 1)
+    if ($matches.Count -eq 0) { return $null }
+    return $matches[0]
+}
+
+function Merge-PackageClaims {
+    param([array]$Claims)
+    $package = Copy-PackageDefinition $Claims[0].Package
+    $package.profiles = @($Claims.Package.profiles | Select-Object -Unique)
+    $package.commands = @($Claims.Package.commands | Where-Object { $_ } | Select-Object -Unique)
+    if (@($Claims.Package.provides).Count -gt 0) {
+        if ($package.psobject.Properties.Name -notcontains "provides") {
+            $package | Add-Member -NotePropertyName provides -NotePropertyValue @()
+        }
+        $package.provides = @($Claims.Package.provides | Where-Object { $_ } | Select-Object -Unique)
+    }
+    $package | Add-Member -NotePropertyName _identity -NotePropertyValue ([string]$Claims[0].Identity)
+    $package | Add-Member -NotePropertyName _refs -NotePropertyValue @($Claims.Ref | Select-Object -Unique)
+    $package | Add-Member -NotePropertyName _claims -NotePropertyValue @($Claims.ProfileName | Select-Object -Unique)
+    $package | Add-Member -NotePropertyName _defaultSelected -NotePropertyValue (@($Claims | Where-Object DefaultSelected).Count -gt 0)
+    $package | Add-Member -NotePropertyName _profileGroups -NotePropertyValue @($Claims.Groups | Select-Object -Unique)
+    $package | Add-Member -NotePropertyName _runtime -NotePropertyValue (@($Claims | Where-Object Runtime).Count -gt 0)
+    return $package
+}
+
+function Resolve-ProfileDefinitions {
+    param(
+        $Config,
+        [hashtable]$Overrides = @{}
+    )
+    $claims = @()
+    $profileNames = @("winenv-runtime")
+    $scoopBuckets = @()
+    $defaultProfiles = @()
+
+    $runtimeProfile = Read-ProfileFile $ProfilePath
+    Assert-ProfileDefinition $runtimeProfile
+    $runtimeEntry = [pscustomobject]@{ id = "runtime"; name = $runtimeProfile.name }
+    $claims += @($runtimeProfile.packages | ForEach-Object { New-PackageClaim $_ $runtimeEntry $runtimeProfile -Runtime })
+    $scoopBuckets += @($runtimeProfile.scoopBuckets)
+    $defaultProfiles += @($runtimeProfile.defaultProfiles | ForEach-Object { "runtime/$_" })
+
+    foreach ($entry in @($Config.profiles | Where-Object enabled)) {
+        $profile = if ($Overrides.ContainsKey([string]$entry.id)) {
+            $Overrides[[string]$entry.id]
+        } else {
+            Read-ProfileFile (Get-ProfileSnapshotPath $entry)
+        }
+        Assert-ProfileDefinition $profile
+        $profileNames += [string]$entry.name
+        $claims += @($profile.packages | ForEach-Object { New-PackageClaim $_ $entry $profile })
+        $scoopBuckets += @($profile.scoopBuckets)
+        $defaultProfiles += @($profile.defaultProfiles | ForEach-Object { "$($entry.id)/$_" })
+    }
+
+    $conflicts = @()
+    $packages = @()
+    foreach ($identityGroup in @($claims | Group-Object Identity)) {
+        $signatureGroups = @($identityGroup.Group | Group-Object Signature | ForEach-Object {
+            [pscustomobject]@{ Claims = @($_.Group); Package = $_.Group[0].Package }
+        })
+        $selectedGroup = if ($signatureGroups.Count -eq 1) {
+            $signatureGroups[0]
+        } else {
+            Get-ResolutionSelection $Config "package:$($identityGroup.Name)" $signatureGroups
+        }
+        if ($null -eq $selectedGroup) {
+            $conflicts += [pscustomobject]@{
+                Key = "package:$($identityGroup.Name)"
+                Label = "Different versions or options for $($identityGroup.Group[0].Package.displayName)"
+                Candidates = $signatureGroups
+            }
+            continue
+        }
+        $packages += Merge-PackageClaims $selectedGroup.Claims
+    }
+
+    $losingIdentities = @{}
+    $capabilities = @()
+    foreach ($package in $packages) {
+        foreach ($command in @($package.commands)) {
+            if ($command) { $capabilities += [pscustomobject]@{ Token = "cmd:$([string]$command)".ToLowerInvariant(); Package = $package } }
+        }
+        foreach ($provided in @($package.provides)) {
+            if ($provided) { $capabilities += [pscustomobject]@{ Token = ([string]$provided).ToLowerInvariant(); Package = $package } }
+        }
+    }
+    foreach ($capabilityGroup in @($capabilities | Group-Object Token)) {
+        $candidatePackages = @($capabilityGroup.Group.Package |
+            Where-Object { -not $losingIdentities.ContainsKey($_._identity) } |
+            Sort-Object _identity -Unique)
+        if ($candidatePackages.Count -lt 2) { continue }
+        $candidateGroups = @($candidatePackages | ForEach-Object {
+            $candidate = $_
+            [pscustomobject]@{
+                Claims = @($candidate._refs | ForEach-Object {
+                    $ref = $_
+                    [pscustomobject]@{ Ref = $ref; Runtime = [bool]$candidate._runtime }
+                })
+                Package = $candidate
+            }
+        })
+        $selectedGroup = Get-ResolutionSelection $Config "capability:$($capabilityGroup.Name)" $candidateGroups
+        if ($null -eq $selectedGroup) {
+            $conflicts += [pscustomobject]@{
+                Key = "capability:$($capabilityGroup.Name)"
+                Label = "Multiple packages provide $($capabilityGroup.Name)"
+                Candidates = $candidateGroups
+            }
+            continue
+        }
+        foreach ($candidate in $candidatePackages) {
+            if ($candidate._identity -ne $selectedGroup.Package._identity) {
+                $losingIdentities[$candidate._identity] = $true
+            }
+        }
+    }
+
+    $effectivePackages = @($packages | Where-Object { -not $losingIdentities.ContainsKey($_._identity) })
+    return [pscustomobject]@{
+        Definition = [pscustomobject]@{
+            schemaVersion = 1
+            name = ($profileNames -join " + ")
+            defaultProfiles = @($defaultProfiles | Select-Object -Unique)
+            scoopBuckets = @($scoopBuckets | Select-Object -Unique)
+            packages = $effectivePackages
+        }
+        Conflicts = @($conflicts)
+    }
+}
+
+function Set-ConflictResolution {
+    param(
+        $Config,
+        [string]$Key,
+        [string]$Selected
+    )
+    $Config.resolutions = @($Config.resolutions | Where-Object { $_.key -ne $Key }) + @([pscustomobject]@{
+        key = $Key
+        selected = $Selected
+        updatedAt = [DateTime]::UtcNow.ToString("o")
+    })
+}
+
+function Resolve-ProfileConflicts {
+    param(
+        $Config,
+        $Result,
+        [hashtable]$Overrides = @{}
+    )
+    while (@($Result.Conflicts).Count -gt 0) {
+        $conflict = @($Result.Conflicts)[0]
+        Write-Step "Profile conflict"
+        Write-Host $conflict.Label -ForegroundColor Yellow
+        $candidates = @($conflict.Candidates)
+        for ($index = 0; $index -lt $candidates.Count; $index++) {
+            $candidate = $candidates[$index]
+            $claims = @($candidate.Claims | ForEach-Object { ($_.Ref -split "/", 2)[0] } | Select-Object -Unique) -join ", "
+            $version = if ($candidate.Package.version) { " @$($candidate.Package.version)" } else { "" }
+            Write-Host ("  [{0}] {1}: {2}/{3}{4}" -f ($index + 1), $claims, $candidate.Package.owner, $candidate.Package.id, $version)
+        }
+        if ($DryRun -or $Yes) {
+            throw "Profile conflicts require an explicit interactive choice; no profile was changed."
+        }
+        $answer = Read-Host "Choose the package to keep [1-$($candidates.Count)]"
+        $selectedIndex = 0
+        if (-not [int]::TryParse($answer, [ref]$selectedIndex) -or $selectedIndex -lt 1 -or $selectedIndex -gt $candidates.Count) {
+            throw "Profile activation cancelled because no valid conflict choice was made."
+        }
+        $selectedToken = Get-CandidateSelectionToken $candidates[$selectedIndex - 1]
+        Set-ConflictResolution $Config $conflict.Key $selectedToken
+        $Result = Resolve-ProfileDefinitions $Config $Overrides
+    }
+    return $Result
 }
 
 function Read-ProfileDefinition {
-    $runtimeProfile = Read-ProfileFile $ProfilePath
+    Initialize-ProfileRegistry
     $config = Read-WinenvConfig
-    $userProfilePath = Resolve-ActiveUserProfilePath $config.userProfile
-    if ($null -eq $userProfilePath) { return $runtimeProfile }
-    return Merge-ProfileDefinitions $runtimeProfile (Read-ProfileFile $userProfilePath)
+    $result = Resolve-ProfileDefinitions $config
+    if (@($result.Conflicts).Count -gt 0) {
+        $labels = @($result.Conflicts.Label) -join "; "
+        throw "Unresolved profile conflicts: $labels. Re-import the affected profile with 'win use'."
+    }
+    return $result.Definition
 }
 
 function Show-UserProfileStatus {
+    Initialize-ProfileRegistry
     $config = Read-WinenvConfig
-    $selection = if ([string]::IsNullOrWhiteSpace($config.userProfile)) { "none (runtime only)" } else { $config.userProfile }
     Write-Host "Runtime profile: $ProfilePath"
-    Write-Host "User profile:    $selection"
-    if (Test-Path $LocalUserProfilePath) {
-        Write-Host "Local snapshot:  $LocalUserProfilePath"
+    $entries = @($config.profiles)
+    if ($entries.Count -eq 0) {
+        Write-Host "User profiles:   none (runtime only)"
+    } else {
+        Write-Host "`nUser profiles"
+        $entries |
+            Select-Object @{Name = "status"; Expression = { if ($_.enabled) { "on" } else { "off" } }}, id, name,
+                @{Name = "type"; Expression = { $_.sourceType }},
+                @{Name = "source"; Expression = { ([string]$_.source) -replace "^(url|file):", "" }} |
+            Format-Table -AutoSize
     }
-    Write-Host "`nUse 'win use <json-path-or-https-url>' to apply one, or 'win off' to disable it." -ForegroundColor DarkGray
+    Write-Host "`nUse 'win use <file-or-https-url>' to add or refresh one; use 'win off <name-or-id>' to disable it." -ForegroundColor DarkGray
 }
 
 function Set-UserProfile {
@@ -272,57 +636,171 @@ function Set-UserProfile {
         return
     }
 
-    $source = Read-UserProfileSource $Target
-    $runtimeProfile = Read-ProfileFile $ProfilePath
+    Initialize-ProfileRegistry
+    $config = Read-WinenvConfig
+    $savedEntry = $null
+    $looksLikeUri = $Target -match "^[a-zA-Z][a-zA-Z0-9+.-]*://"
+    if (-not $looksLikeUri -and -not (Test-Path -LiteralPath $Target -PathType Leaf)) {
+        $savedMatches = @($config.profiles | Where-Object { $_.id -eq $Target -or $_.name -eq $Target })
+        if ($savedMatches.Count -gt 1) {
+            throw "More than one saved profile is named '$Target'. Use an ID: $(@($savedMatches.id) -join ', ')"
+        }
+        if ($savedMatches.Count -eq 1) { $savedEntry = $savedMatches[0] }
+    }
+    $source = if ($null -ne $savedEntry) {
+        $savedPath = Get-ProfileSnapshotPath $savedEntry
+        [pscustomobject]@{
+            Text = Get-Content -Raw -Path $savedPath
+            Label = "saved snapshot $($savedEntry.id)"
+            Key = [string]$savedEntry.source
+            Type = [string]$savedEntry.sourceType
+        }
+    } else {
+        Read-UserProfileSource $Target
+    }
     $userProfile = ConvertFrom-ProfileText $source.Text $source.Label
     Assert-ProfileDefinition $userProfile
-    $merged = Merge-ProfileDefinitions $runtimeProfile $userProfile
-    Assert-ProfileDefinition $merged
+
+    $nextConfig = Copy-WinenvConfig $config
+    $existing = if ($null -ne $savedEntry) {
+        @($nextConfig.profiles | Where-Object { $_.id -eq $savedEntry.id } | Select-Object -First 1)
+    } else {
+        @($nextConfig.profiles | Where-Object { $_.source -eq $source.Key } | Select-Object -First 1)
+    }
+    $now = [DateTime]::UtcNow.ToString("o")
+    if ($existing.Count -gt 0) {
+        $entry = $existing[0]
+        $entry.name = [string]$userProfile.name
+        $entry.sourceType = [string]$source.Type
+        $entry.hash = Get-TextHash $source.Text
+        $entry.enabled = $true
+        $entry.updatedAt = $now
+    } else {
+        $id = Get-ProfileId ([string]$userProfile.name) ([string]$source.Key)
+        $entry = [pscustomobject]@{
+            id = $id
+            name = [string]$userProfile.name
+            source = [string]$source.Key
+            sourceType = [string]$source.Type
+            fileName = "$id.json"
+            hash = Get-TextHash $source.Text
+            enabled = $true
+            addedAt = $now
+            updatedAt = $now
+        }
+        $nextConfig.profiles = @($nextConfig.profiles) + @($entry)
+    }
+
+    $overrides = @{ ([string]$entry.id) = $userProfile }
+    $resolved = Resolve-ProfileDefinitions $nextConfig $overrides
+    $resolved = Resolve-ProfileConflicts $nextConfig $resolved $overrides
+    $definition = $resolved.Definition
+    $selectedPackages = @(Get-DefaultPackages $definition)
 
     if ($Apply) {
-        $selectedPackages = @(Get-SelectedPackages $merged)
         Write-Step "Profile preview"
-        Write-Host "Name:   $($userProfile.name)"
-        Write-Host "Source: $($source.Label)"
-        Write-Host "Install: $($selectedPackages.Count) packages from the runtime and user defaults"
+        Write-Host "Name:    $($userProfile.name)"
+        Write-Host "ID:      $($entry.id)"
+        Write-Host "Source:  $($source.Label)"
+        Write-Host "Active:  $(@($nextConfig.profiles | Where-Object enabled).Count) user profile(s)"
+        Write-Host "Install: $($selectedPackages.Count) package(s) selected by all active defaults"
         $selectedPackages |
-            Select-Object displayName, owner, id, @{Name = "profiles"; Expression = { $_.profiles -join "," }} |
+            Select-Object displayName, owner, id, @{Name = "claims"; Expression = { @($_._claims) -join "," }} |
             Sort-Object owner, displayName |
             Format-Table -AutoSize
-        if (-not (Confirm-Operation "Activate this profile and install the packages shown above?")) {
+        if (-not (Confirm-Operation "Save this profile snapshot and install the packages shown above?")) {
             Write-Host "Profile activation cancelled."
             return
         }
     }
 
-    Write-Plan "Save a stable snapshot to $LocalUserProfilePath"
+    $snapshotPath = Get-ProfileSnapshotPath $entry
+    Write-Plan "Save an independent snapshot to $snapshotPath"
     if (-not $DryRun) {
-        New-Item -ItemType Directory -Path $StateRoot -Force | Out-Null
-        Set-Content -Path $LocalUserProfilePath -Value $source.Text -Encoding UTF8
+        New-Item -ItemType Directory -Path $ProfilesRoot -Force | Out-Null
+        Set-Content -Path $snapshotPath -Value $source.Text -Encoding UTF8
     }
-    Write-WinenvConfig "@local"
+    Write-WinenvConfig $nextConfig
+    Sync-WinenvMiseConfig $definition
 
     if (-not $Apply) {
-        Write-Host "User profile '$($userProfile.name)' is active. Run 'win add' to apply it." -ForegroundColor Green
+        Write-Host "Profile '$($userProfile.name)' is active. Run 'win add' to install all active defaults." -ForegroundColor Green
         return
     }
 
-    Install-Packages $merged $selectedPackages
+    Install-Packages $definition $selectedPackages -ProfileManagedMise
     Invoke-Migrations
-    Write-Host "`nUser profile '$($userProfile.name)' is active and installed." -ForegroundColor Green
+    Write-Host "`nProfile '$($userProfile.name)' is active and installed." -ForegroundColor Green
 }
 
 function Disable-UserProfile {
     param([switch]$AllowAliasTarget)
 
-    if (-not $AllowAliasTarget -and -not [string]::IsNullOrWhiteSpace($Target)) {
-        throw "off does not accept a target. Run 'win off'."
+    Initialize-ProfileRegistry
+    $config = Read-WinenvConfig
+    $enabled = @($config.profiles | Where-Object enabled)
+    if ($enabled.Count -eq 0) {
+        $runtimeOnly = Resolve-ProfileDefinitions $config
+        Sync-WinenvMiseConfig $runtimeOnly.Definition
+        Write-Host "No user profile is active; the runtime profile is unchanged."
+        return
     }
-    Write-WinenvConfig ""
+
+    $requested = if ($AllowAliasTarget) { "" } else { [string]$Target }
+    if ([string]::IsNullOrWhiteSpace($requested)) {
+        if ($enabled.Count -eq 1) {
+            $entry = $enabled[0]
+        } else {
+            if ($Yes -or $DryRun) {
+                throw "More than one profile is active. Specify one: win off <name-or-id>"
+            }
+            Write-Host "Active profiles"
+            $enabled | Select-Object id, name, source | Format-Table -AutoSize
+            $requested = Read-Host "Profile name or ID to disable"
+        }
+    }
+    if ($null -eq $entry) {
+        $matches = @($enabled | Where-Object { $_.id -eq $requested -or $_.name -eq $requested -or $_.source -eq $requested })
+        if ($matches.Count -eq 0) { throw "No active profile matched '$requested'. Run 'win use' to list profiles." }
+        if ($matches.Count -gt 1) {
+            $ids = @($matches.id) -join ", "
+            throw "More than one active profile is named '$requested'. Use an ID: $ids"
+        }
+        $entry = $matches[0]
+    }
+
+    $before = Resolve-ProfileDefinitions $config
+    if (@($before.Conflicts).Count -gt 0) { throw "Active profile conflicts must be resolved with 'win use' before disabling a profile." }
+    $nextConfig = Copy-WinenvConfig $config
+    $nextEntry = @($nextConfig.profiles | Where-Object id -eq $entry.id)[0]
+    $nextEntry.enabled = $false
+    $nextEntry.updatedAt = [DateTime]::UtcNow.ToString("o")
+    $after = Resolve-ProfileDefinitions $nextConfig
+    $after = Resolve-ProfileConflicts $nextConfig $after
+
+    $profile = Read-ProfileFile (Get-ProfileSnapshotPath $entry)
+    $afterSignatures = @{}
+    foreach ($package in @($after.Definition.packages)) { $afterSignatures[(Get-PackageSpecSignature $package)] = $true }
+    $retained = @()
+    $unclaimed = @()
+    foreach ($package in @($profile.packages)) {
+        if ($afterSignatures.ContainsKey((Get-PackageSpecSignature $package))) { $retained += $package } else { $unclaimed += $package }
+    }
+
+    Write-Step "Disable profile"
+    Write-Host "Name:       $($entry.name)"
+    Write-Host "Retained:   $(@($retained).Count) package claim(s) still referenced by another active profile"
+    Write-Host "Unclaimed:  $(@($unclaimed).Count) package specification(s) no longer referenced"
+    if (@($unclaimed).Count -gt 0) {
+        $unclaimed | Select-Object displayName, owner, id | Format-Table -AutoSize
+    }
+
+    Write-WinenvConfig $nextConfig
+    Sync-WinenvMiseConfig $after.Definition
     if ($DryRun) {
-        Write-Host "User profile would be disabled; installed software would be kept."
+        Write-Host "Profile '$($entry.name)' would be disabled; no installed software would be changed, and its snapshot would be kept."
     } else {
-        Write-Host "User profile disabled; installed software was kept." -ForegroundColor Green
+        Write-Host "Profile '$($entry.name)' disabled; no installed software was changed, and its snapshot was kept." -ForegroundColor Green
     }
 }
 
@@ -334,12 +812,30 @@ function Get-SelectedProfiles {
     return @($Definition.defaultProfiles)
 }
 
+function Get-DefaultPackages {
+    param($Definition)
+    return @($Definition.packages | Where-Object {
+        if ($_.psobject.Properties.Name -contains "_defaultSelected") { return [bool]$_._defaultSelected }
+        $packageProfiles = @($_.profiles)
+        @($packageProfiles | Where-Object { @($Definition.defaultProfiles) -contains $_ }).Count -gt 0
+    })
+}
+
 function Get-SelectedPackages {
     param($Definition)
-    $selectedProfiles = Get-SelectedProfiles $Definition
+    if (-not $Profiles -or $Profiles.Count -eq 0) {
+        return @(Get-DefaultPackages $Definition)
+    }
+    $selectors = @($Profiles)
     return @($Definition.packages | Where-Object {
-        $packageProfiles = @($_.profiles)
-        @($packageProfiles | Where-Object { $selectedProfiles -contains $_ }).Count -gt 0
+        $groups = if ($_.psobject.Properties.Name -contains "_profileGroups") { @($_._profileGroups) } else { @($_.profiles) }
+        foreach ($selector in $selectors) {
+            if ($groups -contains $selector) { return $true }
+            if (-not $selector.Contains("/") -and @($groups | Where-Object { $_ -eq $selector -or $_.EndsWith("/$selector", [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) {
+                return $true
+            }
+        }
+        return $false
     })
 }
 
@@ -353,7 +849,9 @@ function Test-PackageMatch {
         [string]$Package.displayName,
         [string]$Package.id,
         (@($Package.commands) -join " "),
-        (@($Package.profiles) -join " ")
+        (@($Package.profiles) -join " "),
+        (@($Package._refs) -join " "),
+        (@($Package._claims) -join " ")
     ) -join " "
     return $searchable.IndexOf($Query, [StringComparison]::OrdinalIgnoreCase) -ge 0
 }
@@ -623,8 +1121,20 @@ function Resolve-PackageReference {
         $Definition,
         [string]$Reference
     )
-    $managed = @($Definition.packages | Where-Object { $_.key -eq $Reference })
+    $managed = @($Definition.packages | Where-Object {
+        if ($_.key -eq $Reference) { return $true }
+        if ($_.psobject.Properties.Name -notcontains "_refs") { return $false }
+        foreach ($ref in @($_._refs)) {
+            if ($ref -eq $Reference) { return $true }
+            if (-not $Reference.Contains("/") -and $ref.EndsWith("/$Reference", [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+        return $false
+    })
     if ($managed.Count -eq 1) { return $managed[0] }
+    if ($managed.Count -gt 1) {
+        $qualified = @($managed | ForEach-Object { @($_._refs) } | Where-Object { $_.EndsWith("/$Reference", [StringComparison]::OrdinalIgnoreCase) }) -join ", "
+        throw "Package reference '$Reference' is ambiguous. Use one of: $qualified"
+    }
     if ($Reference -notmatch "^(winget|scoop|mise):(.+)$") { return $null }
 
     $managerName = $Matches[1]
@@ -774,7 +1284,7 @@ function Assert-ProfileDefinition {
     $commandOwners = @{}
 
     $definitionProperties = @("`$schema", "schemaVersion", "name", "defaultProfiles", "scoopBuckets", "packages")
-    $packageProperties = @("key", "displayName", "owner", "id", "source", "bucket", "version", "profiles", "commands", "instructions")
+    $packageProperties = @("key", "displayName", "owner", "id", "source", "bucket", "version", "profiles", "commands", "provides", "instructions")
     $definitionPropertyNames = @($Definition.psobject.Properties.Name)
     $requiredDefinitionProperties = @("schemaVersion", "name", "defaultProfiles", "scoopBuckets", "packages")
 
@@ -827,6 +1337,13 @@ function Assert-ProfileDefinition {
         if (@($commands | Group-Object | Where-Object Count -gt 1).Count -gt 0) {
             $errors.Add("$key`: commands contains duplicate values")
         }
+        $providedCapabilities = if ($packagePropertyNames -contains "provides") { @($package.provides) } else { @() }
+        if (@($providedCapabilities | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) {
+            $errors.Add("$key`: provides contains an empty value")
+        }
+        if (@($providedCapabilities | Group-Object | Where-Object Count -gt 1).Count -gt 0) {
+            $errors.Add("$key`: provides contains duplicate values")
+        }
 
         if (-not [string]::IsNullOrWhiteSpace($key)) {
             if ($seenKeys.ContainsKey($key)) {
@@ -837,7 +1354,7 @@ function Assert-ProfileDefinition {
         }
 
         if (-not [string]::IsNullOrWhiteSpace($owner) -and -not [string]::IsNullOrWhiteSpace($id)) {
-            $identity = "$owner`:$id".ToLowerInvariant()
+            $identity = Get-PackageIdentity $package
             if ($seenPackages.ContainsKey($identity)) {
                 $errors.Add("Duplicate managed package: $identity")
             } else {
@@ -989,15 +1506,57 @@ function Install-ScoopPackage {
 }
 
 function Install-MisePackage {
-    param($Package)
+    param(
+        $Package,
+        [switch]$ProfileManaged
+    )
     $version = if ($Package.version) { [string]$Package.version } else { "latest" }
-    Invoke-Native "mise" @("use", "--global", "$($Package.id)@$version")
+    if ($ProfileManaged) {
+        Invoke-Native "mise" @("install", "$($Package.id)@$version")
+    } else {
+        Invoke-Native "mise" @("use", "--global", "$($Package.id)@$version")
+    }
+}
+
+function Get-WinenvMiseConfigPath {
+    $configRoot = if (-not [string]::IsNullOrWhiteSpace($env:MISE_CONFIG_DIR)) {
+        $env:MISE_CONFIG_DIR
+    } else {
+        $userRoot = [Environment]::GetFolderPath("UserProfile")
+        if ([string]::IsNullOrWhiteSpace($userRoot)) { throw "Windows user profile directory could not be resolved." }
+        Join-Path $userRoot ".config\mise"
+    }
+    return Join-Path $configRoot "conf.d\winenv.toml"
+}
+
+function ConvertTo-TomlString {
+    param([string]$Value)
+    return '"' + $Value.Replace('\', '\\').Replace('"', '\"') + '"'
+}
+
+function Sync-WinenvMiseConfig {
+    param($Definition)
+    $path = Get-WinenvMiseConfigPath
+    $tools = @(Get-DefaultPackages $Definition | Where-Object owner -eq "mise" | Sort-Object id)
+    $lines = @(
+        "# Generated by Winenv. Edit profiles, not this file.",
+        "[tools]"
+    )
+    foreach ($package in $tools) {
+        $version = if ($package.version) { [string]$package.version } else { "latest" }
+        $lines += "$(ConvertTo-TomlString ([string]$package.id)) = $(ConvertTo-TomlString $version)"
+    }
+    Write-Plan "Sync Winenv's mise declarations to $path"
+    if ($DryRun) { return }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+    Set-Content -Path $path -Value ($lines -join "`r`n") -Encoding UTF8
 }
 
 function Install-Packages {
     param(
         $Definition,
-        [array]$Packages
+        [array]$Packages,
+        [switch]$ProfileManagedMise
     )
     $packages = @($Packages)
     $owners = @($packages | ForEach-Object { $_.owner } | Sort-Object -Unique)
@@ -1019,7 +1578,7 @@ function Install-Packages {
         switch ($package.owner) {
             "winget" { Install-WinGetPackage $package }
             "scoop" { Install-ScoopPackage $package }
-            "mise" { Install-MisePackage $package }
+            "mise" { Install-MisePackage $package -ProfileManaged:$ProfileManagedMise }
             "vendor" {
                 Write-Host "Manual vendor-managed package: $($package.displayName)" -ForegroundColor Yellow
                 if ($package.instructions) { Write-Host $package.instructions }
@@ -1033,7 +1592,8 @@ function Install-Packages {
 function Install-SelectedPackages {
     param($Definition)
     if ([string]::IsNullOrWhiteSpace($Target)) {
-        Install-Packages $Definition @(Get-SelectedPackages $Definition)
+        Sync-WinenvMiseConfig $Definition
+        Install-Packages $Definition @(Get-SelectedPackages $Definition) -ProfileManagedMise:(!$Profiles -or $Profiles.Count -eq 0)
         return
     }
 
@@ -1093,14 +1653,11 @@ function Invoke-Migrations {
 
 function Show-Profile {
     param($Definition)
-    $selectedProfiles = Get-SelectedProfiles $Definition
-    Write-Host "Profile: $($Definition.name)"
-    $config = Read-WinenvConfig
-    $userProfile = if ([string]::IsNullOrWhiteSpace($config.userProfile)) { "none" } else { $config.userProfile }
-    Write-Host "User profile: $userProfile"
-    Write-Host "Selected profiles: $($selectedProfiles -join ', ')"
+    Show-UserProfileStatus
+    Write-Host "`nEffective packages"
     Get-SelectedPackages $Definition |
-        Select-Object key, displayName, owner, id, @{Name = "profiles"; Expression = { $_.profiles -join "," }} |
+        Select-Object key, displayName, owner, id,
+            @{Name = "claims"; Expression = { if ($_.psobject.Properties.Name -contains "_claims") { @($_._claims) -join "," } else { "runtime" } }} |
         Sort-Object owner, key |
         Format-Table -AutoSize
 }
@@ -1108,8 +1665,7 @@ function Show-Profile {
 function Test-ProfileHealth {
     param($Definition)
     Write-Step "Validating package ownership"
-    Assert-ProfileDefinition $Definition
-    Write-Host "Manifest ownership is consistent." -ForegroundColor Green
+    Write-Host "All active profile claims resolved without ambiguity." -ForegroundColor Green
 
     $selectedPackages = Get-SelectedPackages $Definition
     $requiredOwners = @($selectedPackages | ForEach-Object { $_.owner } | Sort-Object -Unique)
@@ -1145,6 +1701,7 @@ function Update-All {
     param($Definition)
     Update-WinenvSelf
     Ensure-WinGet
+    Sync-WinenvMiseConfig $Definition
 
     Write-Step "Update scope"
     Write-Host "WinGet: every installed package with an available update"
@@ -1274,7 +1831,6 @@ if ($Action -eq "self-update") {
 }
 
 $definition = Read-ProfileDefinition
-Assert-ProfileDefinition $definition
 
 switch ($Action) {
     "list" { Show-Profile $definition }

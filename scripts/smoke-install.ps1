@@ -31,6 +31,7 @@ $smokeProfilePath = Join-Path $testRoot "smoke-user-profile.json"
 '@ | Set-Content -Path $smokeProfilePath -Encoding UTF8
 
 $env:LOCALAPPDATA = $testRoot
+$env:MISE_CONFIG_DIR = Join-Path $testRoot "mise"
 & (Join-Path $root "install.ps1") -Version $expectedVersion -UserProfile $smokeProfilePath -ToolOnly -Force
 
 $installedEntry = Join-Path $testRoot "Winenv\versions\$expectedVersion\win.ps1"
@@ -46,7 +47,7 @@ if ($installedVersion -ne $expectedVersion -or $launcherVersion -ne $expectedVer
 }
 
 $activeProfile = (& $installedEntry list 6>&1 | Out-String -Width 4096)
-if ($activeProfile -notmatch "winenv-runtime \+ smoke-user" -or $activeProfile -notmatch "Windows Terminal" -or $activeProfile -notmatch "junegunn.fzf") {
+if ($activeProfile -notmatch "smoke-user" -or $activeProfile -notmatch "Windows Terminal" -or $activeProfile -notmatch "junegunn.fzf") {
     throw "The installer did not activate the requested user profile over the runtime profile."
 }
 

@@ -73,10 +73,10 @@ win add
 win add vscode
 win add scoop:extras/powertoys
 
-# 启用本地或线上 profile；停用不会卸载软件
+# 本地和线上 profile 可以同时启用；停用不会卸载软件
 win use C:\Users\me\my-winenv.json
 win use https://example.com/my-winenv.json
-win off
+win off my-winenv
 
 # 更新、卸载和清理
 win up
@@ -120,9 +120,29 @@ win use C:\Users\me\my-winenv.json
 win use https://raw.githubusercontent.com/user/dotfiles/main/winenv.json
 ```
 
-`win use` 会校验 profile、展示将安装的软件并请求确认，然后在一次命令里完成启用和安装。远程 profile 只接受 HTTPS；导入后的内容会保存为 `%LOCALAPPDATA%\Winenv\user-profile.json` 中的稳定快照，选择状态保存在 `%LOCALAPPDATA%\Winenv\config.json`，因此不会因为原文件或在线链接随后变化而悄悄改变当前机器。
+`win use` 会校验 profile，把它作为一个独立声明加入当前机器，展示所有启用 profile 合成后的安装计划并请求确认，然后完成快照保存和安装。它不会覆盖已经启用的其他 profile。同一来源再次执行 `win use` 只刷新自己的快照，不会新建重复项；远程 profile 只接受 HTTPS，并且不会随 `win up` 悄悄刷新，想采用上游的新内容时再次执行原来的 `win use <url>` 即可。
 
-Winenv 官方仓库和 Release 不携带维护者个人清单，也不需要维护一份社区 profile 目录。任何人都可以独立发布自己的配置并分享链接。`win off` 会回到纯运行时层，但不会擅自卸载已经安装的软件。
+每个快照保存在 `%LOCALAPPDATA%\Winenv\profiles`，注册状态和本机做出的冲突选择保存在 `%LOCALAPPDATA%\Winenv\config.json`。合成遵循几条简单规则：
+
+- 管理器、来源、包 ID 和版本都相同的项只安装一次，但会显示所有 profile 的声明；
+- 同一个包要求不同版本，或者两个不同包声明同一个命令时，必须在本机明确选择，Winenv 不按导入顺序猜测；
+- `-y` 和 `-n` 遇到尚未解决的冲突会停止，不会静默采用某一方；
+- 运行时 profile 始终保留，避免共享配置破坏 Winenv 自己所需的 PowerShell 和 fzf。
+
+`win use` 不带参数会列出所有已登记 profile；传入已保存的名称或 ID 会直接从本机快照重新启用，不需要再次输入 URL。只有传入文件或 HTTPS URL 才会刷新快照。多个 profile 同名时可以使用 `win ls` 显示的 ID 精确指定：
+
+```powershell
+win use
+win use shared-tools
+win off shared-tools
+win off shared-tools-e06532a770
+```
+
+`win off <profile>` 只撤销这个 profile 的声明并重新计算引用：重复软件若仍被其他 profile 声明就继续受引用，否则标记为 unclaimed。无论哪种情况，它都保留已经安装的软件和 profile 快照。实际软件始终归 WinGet、Scoop 或 mise 管理；确认不再需要后使用 `win rm <software>` 显式卸载。`win clean` 只清理 Scoop 旧版本、缓存和未被 mise 配置引用的工具版本，不会把 unclaimed 软件当垃圾自动删除。
+
+Winenv 官方仓库和 Release 不携带维护者个人清单，也不需要维护一份社区 profile 目录。任何人都可以独立发布自己的配置并分享链接；使用者可以同时组合自己的配置和多个社区配置，不需要把其中任何一份复制进 Winenv 仓库。
+
+profile 中默认启用的 mise 工具会写入 mise 自己会读取的独立片段 `%USERPROFILE%\.config\mise\conf.d\winenv.toml`。Winenv 不修改你的全局 `config.toml`；停用 profile 后只重算这个生成文件，因此项目级和个人全局 mise 配置仍然独立。
 
 可在命令行临时选择 profiles：
 
@@ -162,9 +182,11 @@ winenv/
 ```text
 %LOCALAPPDATA%\Winenv\state.json
 %LOCALAPPDATA%\Winenv\config.json
+%LOCALAPPDATA%\Winenv\profiles\*.json
+%USERPROFILE%\.config\mise\conf.d\winenv.toml
 ```
 
-前者只记录已执行的 migration；后者只记录当前用户 profile 的选择。两者都不存储密码或登录状态。
+`state.json` 只记录已执行的 migration；`config.json` 记录 profile 注册表和本机冲突选择；`profiles` 保存稳定快照；`winenv.toml` 是根据当前有效声明生成的 mise 配置片段。它们都不存储密码或登录状态。旧版单一 `user-profile.json` 会在首次运行时迁移成独立快照，原文件保留不删。
 
 ## 版本和发布
 
