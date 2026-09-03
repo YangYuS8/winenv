@@ -1,3 +1,10 @@
+# [0.4.0](https://github.com/YangYuS8/winenv/compare/v0.3.0...v0.4.0) (2026-09-03)
+
+
+### Features
+
+* use live package manager catalogs ([fe8f8ba](https://github.com/YangYuS8/winenv/commit/fe8f8baff87c6100d3c124380debdf8602508ca0))
+
 # [0.3.0](https://github.com/YangYuS8/winenv/compare/v0.2.1...v0.3.0) (2026-09-03)
 
 
