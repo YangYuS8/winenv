@@ -52,6 +52,31 @@ $testSharedProfilePath = Join-Path $testLocalAppData "test-shared-profile.json"
 $testConflictProfilePath = Join-Path $testLocalAppData "test-conflict-profile.json"
 $testProviderConflictProfilePath = Join-Path $testLocalAppData "test-provider-conflict-profile.json"
 New-Item -ItemType Directory -Path $testLocalAppData -Force | Out-Null
+$testBinPath = Join-Path $testLocalAppData "bin"
+New-Item -ItemType Directory -Path $testBinPath -Force | Out-Null
+$originalProcessPath = $env:Path
+$originalUpperProcessPath = $env:PATH
+$pathSeparator = [string][IO.Path]::PathSeparator
+if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+    $testFzfPath = Join-Path $testBinPath "fzf.cmd"
+    @(
+        "@echo off",
+        'if "%~1"=="--version" (echo 0.73.0 & exit /b 0)',
+        'findstr /b /c:"winget:winget/Microsoft.PowerToys"'
+    ) | Set-Content -Path $testFzfPath -Encoding ASCII
+} else {
+    $testFzfPath = Join-Path $testBinPath "fzf"
+    @(
+        "#!/bin/sh",
+        'if [ "$1" = "--version" ]; then echo 0.73.0; exit 0; fi',
+        'while IFS= read -r line; do case "$line" in winget:winget/Microsoft.PowerToys*) printf "%s\n" "$line"; break;; esac; done'
+    ) | Set-Content -Path $testFzfPath -Encoding utf8NoBOM
+    & chmod "+x" $testFzfPath
+}
+$env:Path = "$testBinPath$pathSeparator$originalProcessPath"
+if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+    $env:PATH = "$testBinPath$pathSeparator$originalUpperProcessPath"
+}
 [pscustomobject]@{
     schemaVersion = 1
     name = "test-user"
@@ -168,13 +193,15 @@ function global:Read-Host {
     throw "Unexpected interactive prompt: $Prompt"
 }
 
+& (Join-Path $PSScriptRoot "test-requirements.ps1")
+
 $runtimeList = (& (Join-Path $root "win.ps1") list | Out-String -Width 4096)
 if ($runtimeList -notmatch "PowerShell 7" -or $runtimeList -notmatch "junegunn.fzf" -or $runtimeList -match "Node.js") {
     throw "The default runtime profile contains personal software or is missing a runtime dependency."
 }
 $runtimeInstall = (& (Join-Path $root "win.ps1") install -DryRun 6>&1 | Out-String -Width 4096)
-if ($runtimeInstall -notmatch "Microsoft.PowerShell" -or $runtimeInstall -notmatch "junegunn.fzf" -or $runtimeInstall -match "Microsoft.VisualStudioCode") {
-    throw "The default install route is not limited to Winenv runtime dependencies."
+if ($runtimeInstall -notmatch "Runtime requirements" -or $runtimeInstall -notmatch "PowerShell 7" -or $runtimeInstall -notmatch "fzf" -or $runtimeInstall -match "Microsoft.VisualStudioCode") {
+    throw "The default install route did not probe only Winenv runtime dependencies."
 }
 & (Join-Path $root "win.ps1") use
 $helpText = (& (Join-Path $root "win.ps1") help 6>&1 | Out-String -Width 4096)
@@ -308,9 +335,9 @@ if (@($afterProviderConflictRegistry.profiles | Where-Object { $_.source -match 
     throw "A rejected provider conflict changed the persisted registry."
 }
 & (Join-Path $root "win.ps1") -n
-& (Join-Path $root "win.ps1") powertoys -n
-if (@($global:WinenvFzfRows | Where-Object { $_ -match "^scoop:extras/powertoys`t" }).Count -ne 1) {
-    throw "The live store did not keep the Scoop alternative separate from WinGet."
+$storeSelection = (& (Join-Path $root "win.ps1") powertoys -n 6>&1 | Out-String -Width 4096)
+if ($storeSelection -notmatch "Microsoft\.PowerToys" -or $storeSelection -notmatch "winget") {
+    throw "The live store did not return the package selected by the external fzf executable."
 }
 & (Join-Path $root "win.ps1") show vscode -n
 & (Join-Path $root "win.ps1") show "winget:winget/Microsoft.PowerToys" -n
@@ -326,7 +353,10 @@ $miseSearch = (& (Join-Path $root "win.ps1") find node -From mise | Out-String -
 if ($miseSearch -notmatch "core:node" -or $miseSearch -notmatch "win add node") {
     throw "The mise result did not merge live registry data with the baseline override."
 }
-& (Join-Path $root "win.ps1") check
+$checkText = (& (Join-Path $root "win.ps1") check 6>&1 | Out-String -Width 4096)
+if ($checkText -notmatch "same-name aliases/functions ignored: Function:fzf" -or $checkText -notmatch "other paths:") {
+    throw "The environment check did not report ignored command shadows and duplicate executable paths."
+}
 $reportedVersion = & (Join-Path $root "win.ps1") ver
 if ([string]::IsNullOrWhiteSpace([string]$reportedVersion)) {
     throw "The version command returned no version."
@@ -356,6 +386,10 @@ if ($resetMiseFragment -match '"node"\s*=') {
     throw "Disabling the final claiming profile did not update Winenv's mise fragment."
 }
 if (Test-Path $testLocalAppData) {
+    $env:Path = $originalProcessPath
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+        $env:PATH = $originalUpperProcessPath
+    }
     Remove-Item -Path $testLocalAppData -Recurse -Force
 }
 

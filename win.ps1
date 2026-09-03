@@ -27,6 +27,19 @@ $ConfigPath = Join-Path $StateRoot "config.json"
 $LocalUserProfilePath = Join-Path $StateRoot "user-profile.json"
 $ProfilesRoot = Join-Path $StateRoot "profiles"
 $AllowedOwners = @("winget", "scoop", "mise", "vendor")
+$ResolvedManagerCommands = @{}
+$RuntimeRequirements = @{
+    "powershell" = [pscustomobject]@{
+        Name = "PowerShell 7"
+        Command = "pwsh"
+        MinimumVersion = [Version]"7.4.0"
+    }
+    "fzf" = [pscustomobject]@{
+        Name = "fzf"
+        Command = "fzf"
+        MinimumVersion = [Version]"0.35.0"
+    }
+}
 $ActionAliases = @{
     "ls" = "list"
     "off" = "unuse"
@@ -135,12 +148,185 @@ function Invoke-Native {
 function Refresh-ProcessPath {
     $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    $env:Path = (@($machinePath, $userPath) | Where-Object { $_ }) -join ";"
+    $entries = New-Object System.Collections.Generic.List[string]
+    $seen = @{}
+    foreach ($pathValue in @($env:Path, $machinePath, $userPath)) {
+        foreach ($entry in @([string]$pathValue -split ";")) {
+            if ([string]::IsNullOrWhiteSpace($entry)) { continue }
+            $expanded = [Environment]::ExpandEnvironmentVariables($entry.Trim())
+            $key = $expanded.TrimEnd("\").ToLowerInvariant()
+            if (-not $seen.ContainsKey($key)) {
+                $seen[$key] = $true
+                $entries.Add($expanded)
+            }
+        }
+    }
+    $env:Path = $entries -join ";"
 }
 
 function Test-Command {
     param([string]$Name)
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Test-IsWindowsPlatform {
+    return [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
+}
+
+function Get-ExternalCommandCandidates {
+    param([string]$Name)
+    return @(Get-Command $Name -All -ErrorAction SilentlyContinue | Where-Object {
+        $_.CommandType -in @("Application", "ExternalScript") -and
+        -not [string]::IsNullOrWhiteSpace([string]$_.Path)
+    })
+}
+
+function Invoke-CommandProbe {
+    param(
+        [string]$Path,
+        [string[]]$Arguments
+    )
+    try {
+        $global:LASTEXITCODE = 0
+        $lines = @(& $Path @Arguments 2>&1)
+        $succeeded = $?
+        $exitCode = if ($null -eq $LASTEXITCODE) {
+            if ($succeeded) { 0 } else { 1 }
+        } else {
+            [int]$LASTEXITCODE
+        }
+        return [pscustomobject]@{
+            Lines = @($lines | ForEach-Object { [string]$_ })
+            ExitCode = $exitCode
+            Error = ""
+        }
+    } catch {
+        return [pscustomobject]@{
+            Lines = @()
+            ExitCode = 1
+            Error = $_.Exception.Message
+        }
+    }
+}
+
+function ConvertTo-DetectedVersion {
+    param([array]$Lines)
+    $text = @($Lines) -join "`n"
+    $match = [Regex]::Match($text, "(?<!\d)(\d+\.\d+(?:\.\d+){0,2})")
+    if (-not $match.Success) { return $null }
+    try { return [Version]$match.Groups[1].Value } catch { return $null }
+}
+
+function Get-ManagerProbe {
+    param([ValidateSet("winget", "scoop", "mise")][string]$Name)
+    $candidates = @(Get-ExternalCommandCandidates $Name)
+    if ($candidates.Count -eq 0) {
+        return [pscustomobject]@{
+            Name = $Name
+            Status = "missing"
+            Version = $null
+            Path = ""
+            OtherPaths = @()
+            Error = ""
+        }
+    }
+
+    $path = [string]$candidates[0].Path
+    $result = Invoke-CommandProbe $path @("--version")
+    return [pscustomobject]@{
+        Name = $Name
+        Status = if ($result.ExitCode -eq 0) { "available" } else { "broken" }
+        Version = ConvertTo-DetectedVersion $result.Lines
+        Path = $path
+        OtherPaths = @($candidates | Select-Object -Skip 1 | ForEach-Object Path | Select-Object -Unique)
+        Error = [string]$result.Error
+    }
+}
+
+function Get-RuntimeRequirement {
+    param($Package)
+    if ($null -eq $Package -or -not [bool]$Package._runtime) { return $null }
+    $key = [string]$Package.key
+    if (-not $RuntimeRequirements.ContainsKey($key)) { return $null }
+    return $RuntimeRequirements[$key]
+}
+
+function Get-RuntimeRequirementProbe {
+    param($Package)
+    $requirement = Get-RuntimeRequirement $Package
+    if ($null -eq $requirement) { return $null }
+
+    $allCommands = @(Get-Command $requirement.Command -All -ErrorAction SilentlyContinue)
+    $candidates = @($allCommands | Where-Object {
+        $_.CommandType -in @("Application", "ExternalScript") -and
+        -not [string]::IsNullOrWhiteSpace([string]$_.Path)
+    })
+    $shadowing = @($allCommands | Where-Object {
+        $_.CommandType -notin @("Application", "ExternalScript")
+    } | ForEach-Object { "$($_.CommandType):$($_.Name)" } | Select-Object -Unique)
+
+    if ($candidates.Count -eq 0) {
+        return [pscustomobject]@{
+            Name = $requirement.Name
+            Command = $requirement.Command
+            Status = "missing"
+            Version = $null
+            MinimumVersion = $requirement.MinimumVersion
+            Path = ""
+            OtherPaths = @()
+            Shadowing = $shadowing
+            Error = ""
+        }
+    }
+
+    $path = [string]$candidates[0].Path
+    $arguments = if ($requirement.Command -eq "pwsh") {
+        @("-NoLogo", "-NoProfile", "-Command", '$PSVersionTable.PSVersion.ToString()')
+    } else {
+        @("--version")
+    }
+    $result = Invoke-CommandProbe $path $arguments
+    $version = ConvertTo-DetectedVersion $result.Lines
+    $status = if ($result.ExitCode -ne 0 -or $null -eq $version) {
+        "broken"
+    } elseif ($version -lt $requirement.MinimumVersion) {
+        "outdated"
+    } else {
+        "available"
+    }
+    return [pscustomobject]@{
+        Name = $requirement.Name
+        Command = $requirement.Command
+        Status = $status
+        Version = $version
+        MinimumVersion = $requirement.MinimumVersion
+        Path = $path
+        OtherPaths = @($candidates | Select-Object -Skip 1 | ForEach-Object Path | Select-Object -Unique)
+        Shadowing = $shadowing
+        Error = [string]$result.Error
+    }
+}
+
+function Get-ResolvedManagerCommand {
+    param([ValidateSet("winget", "scoop", "mise")][string]$Name)
+    if ($ResolvedManagerCommands.ContainsKey($Name)) {
+        return [string]$ResolvedManagerCommands[$Name]
+    }
+    $probe = Get-ManagerProbe $Name
+    if ($probe.Status -eq "available") {
+        $ResolvedManagerCommands[$Name] = $probe.Path
+        return [string]$probe.Path
+    }
+    if ($DryRun) { return $Name }
+    throw "$Name is unavailable. Run 'win check' for details."
+}
+
+function Get-OptionalManagerCommand {
+    param([ValidateSet("winget", "scoop", "mise")][string]$Name)
+    $probe = Get-ManagerProbe $Name
+    if ($probe.Status -eq "available") { return [string]$probe.Path }
+    if ($DryRun -and (Test-Command $Name)) { return $Name }
+    return $null
 }
 
 function ConvertFrom-ProfileText {
@@ -1181,7 +1367,11 @@ function Show-PackageInfo {
 
     Write-Host $package.displayName -ForegroundColor Cyan
     Write-Host ("Reference: {0}" -f $Target)
-    Write-Host ("Manager:   {0}" -f $package.owner)
+    if ([bool]$package._runtime) {
+        Write-Host ("Fallback:  {0}" -f $package.owner)
+    } else {
+        Write-Host ("Manager:   {0}" -f $package.owner)
+    }
     Write-Host ("Package:   {0}" -f $package.id)
     if (@($package.profiles).Count -gt 0) {
         Write-Host ("Profiles:  {0}" -f (@($package.profiles) -join ", "))
@@ -1194,19 +1384,22 @@ function Show-PackageInfo {
     Write-Host "`nPackage details" -ForegroundColor DarkCyan
     switch ($package.owner) {
         "winget" {
-            if (Test-Command "winget") {
+            $managerProbe = Get-ManagerProbe "winget"
+            if ($managerProbe.Status -eq "available") {
                 $source = if ($package.source) { [string]$package.source } else { "winget" }
-                Invoke-Native "winget" @("show", "--id", [string]$package.id, "--exact", "--source", $source, "--accept-source-agreements", "--disable-interactivity") -IgnoreExitCode
+                Invoke-Native $managerProbe.Path @("show", "--id", [string]$package.id, "--exact", "--source", $source, "--accept-source-agreements", "--disable-interactivity") -IgnoreExitCode
             } else { Write-Host "WinGet is unavailable." }
         }
         "scoop" {
-            if (Test-Command "scoop") {
+            $managerProbe = Get-ManagerProbe "scoop"
+            if ($managerProbe.Status -eq "available") {
                 $qualifiedId = if ($package.bucket) { "$($package.bucket)/$($package.id)" } else { [string]$package.id }
-                Invoke-Native "scoop" @("info", $qualifiedId) -IgnoreExitCode
+                Invoke-Native $managerProbe.Path @("info", $qualifiedId) -IgnoreExitCode
             } else { Write-Host "Scoop is unavailable." }
         }
         "mise" {
-            if (Test-Command "mise") { Invoke-Native "mise" @("registry", [string]$package.id) -IgnoreExitCode }
+            $managerProbe = Get-ManagerProbe "mise"
+            if ($managerProbe.Status -eq "available") { Invoke-Native $managerProbe.Path @("registry", [string]$package.id) -IgnoreExitCode }
             else { Write-Host "mise is unavailable." }
         }
         "vendor" { Write-Host "This package is managed by its vendor installer." }
@@ -1219,15 +1412,26 @@ function Select-PackageCandidates {
         [string]$Prompt,
         [switch]$Multi
     )
-    if (-not (Test-Command "fzf")) {
+    $runtimeMarker = [pscustomobject]@{ key = "fzf"; _runtime = $true }
+    $fzfProbe = Get-RuntimeRequirementProbe $runtimeMarker
+    if ($fzfProbe.Status -ne "available") {
         $Candidates | Select-Object Manager, Source, Name, Id, Version, ManagedKey | Format-Table -AutoSize
-        throw "Interactive selection requires fzf. Install the baseline package with 'win add fzf'."
+        throw "Interactive selection requires fzf $($fzfProbe.MinimumVersion) or newer. Run 'win add fzf', then 'win check'."
     }
 
     $rows = @($Candidates | ForEach-Object {
         @([string]$_.Token, [string]$_.Manager, [string]$_.Source, [string]$_.Name, [string]$_.Id, [string]$_.Version, [string]$_.ManagedKey) -join "`t"
     })
-    $previewCommand = "pwsh -NoLogo -NoProfile -File `"$PSCommandPath`" show {1}"
+    $pwshMarker = [pscustomobject]@{ key = "powershell"; _runtime = $true }
+    $pwshProbe = Get-RuntimeRequirementProbe $pwshMarker
+    $previewHost = if ($pwshProbe.Status -eq "available") {
+        $pwshProbe.Path
+    } elseif (Test-IsWindowsPlatform) {
+        Join-Path $PSHOME "powershell.exe"
+    } else {
+        "pwsh"
+    }
+    $previewCommand = "`"$previewHost`" -NoLogo -NoProfile -File `"$PSCommandPath`" show {1}"
     $fzfArguments = @(
         "--delimiter", "`t", "--with-nth", "2,3,4,5,6,7",
         "--header", "Manager | Source | Name | ID | Version | Baseline   (Alt-P: details, Esc: cancel)",
@@ -1239,7 +1443,7 @@ function Select-PackageCandidates {
     )
     if ($Multi) { $fzfArguments = @("--multi") + $fzfArguments }
 
-    $selectedRows = @($rows | & fzf @fzfArguments)
+    $selectedRows = @($rows | & $fzfProbe.Path @fzfArguments)
     $fzfExitCode = $LASTEXITCODE
     if ($fzfExitCode -in @(1, 130) -or $selectedRows.Count -eq 0) { return @() }
     if ($null -ne $fzfExitCode -and $fzfExitCode -ne 0) { throw "fzf failed with exit code $fzfExitCode" }
@@ -1385,36 +1589,195 @@ function Confirm-Operation {
     return $answer -match "^(y|yes)$"
 }
 
-function Ensure-WinGet {
-    if (-not (Test-Command "winget")) {
-        throw "WinGet is required. Update or install App Installer from Microsoft Store, then run this command again."
+function Resolve-RuntimeInstallPlan {
+    param([array]$Packages)
+    $remaining = New-Object System.Collections.Generic.List[object]
+    $verificationPackages = New-Object System.Collections.Generic.List[object]
+    $rows = New-Object System.Collections.Generic.List[object]
+
+    foreach ($package in @($Packages)) {
+        $requirement = Get-RuntimeRequirement $package
+        if ($null -eq $requirement) {
+            $remaining.Add($package)
+            continue
+        }
+
+        $probe = Get-RuntimeRequirementProbe $package
+        $versionText = if ($null -ne $probe.Version) { $probe.Version.ToString() } else { "-" }
+        if ($probe.Status -eq "available") {
+            $rows.Add([pscustomobject]@{
+                Action = "reuse"
+                Requirement = $probe.Name
+                Version = $versionText
+                Location = $probe.Path
+            })
+            continue
+        }
+
+        if ($probe.Status -eq "missing") {
+            $rows.Add([pscustomobject]@{
+                Action = "install"
+                Requirement = $probe.Name
+                Version = ">= $($probe.MinimumVersion)"
+                Location = "via $($package.owner)"
+            })
+            $remaining.Add($package)
+            $verificationPackages.Add($package)
+            continue
+        }
+
+        $reason = if ($probe.Status -eq "outdated") {
+            "version $versionText is older than the required $($probe.MinimumVersion)"
+        } else {
+            "the command could not be executed"
+        }
+        $rows.Add([pscustomobject]@{
+            Action = "conflict"
+            Requirement = $probe.Name
+            Version = $versionText
+            Location = $probe.Path
+        })
+        Write-Step "Runtime requirement conflict"
+        Write-Host "$($probe.Name): $reason." -ForegroundColor Yellow
+        Write-Host "Existing command: $($probe.Path)"
+        Write-Host "Fallback package: $($package.owner)/$($package.id)"
+        if ($DryRun -or $Yes) {
+            throw "A broken or outdated runtime command requires an explicit interactive choice; nothing was installed."
+        }
+        if (-not (Confirm-Operation "Install the fallback package and verify command resolution afterwards?")) {
+            throw "Runtime dependency installation was cancelled."
+        }
+        $remaining.Add($package)
+        $verificationPackages.Add($package)
     }
+
+    if ($rows.Count -gt 0) {
+        Write-Step "Runtime requirements"
+        Write-Host ("{0,-10} {1,-18} {2,-12} {3}" -f "action", "requirement", "version", "location") -ForegroundColor DarkGray
+        foreach ($row in $rows) {
+            $color = switch ($row.Action) {
+                "reuse" { "Green" }
+                "install" { "Cyan" }
+                default { "Yellow" }
+            }
+            Write-Host ("{0,-10} {1,-18} {2,-12} {3}" -f $row.Action, $row.Requirement, $row.Version, $row.Location) -ForegroundColor $color
+        }
+    }
+
+    return [pscustomobject]@{
+        Packages = @($remaining | ForEach-Object { $_ })
+        VerificationPackages = @($verificationPackages | ForEach-Object { $_ })
+    }
+}
+
+function Assert-RuntimeRequirements {
+    param([array]$Packages)
+    if ($DryRun -or @($Packages).Count -eq 0) { return }
+
+    Refresh-ProcessPath
+    foreach ($package in @($Packages)) {
+        $probe = Get-RuntimeRequirementProbe $package
+        if ($probe.Status -ne "available") {
+            $detail = if ($probe.Path) { "The effective executable is $($probe.Path)." } else { "The command is still absent from PATH." }
+            throw "$($probe.Name) was installed through $($package.owner), but its requirement is still $($probe.Status). $detail Open a new PowerShell window, run 'win check', and resolve the reported PATH conflict."
+        }
+        Write-Host ("ready     {0,-18} {1,-12} {2}" -f $probe.Name, $probe.Version, $probe.Path) -ForegroundColor Green
+    }
+}
+
+function Ensure-WinGet {
+    $probe = Get-ManagerProbe "winget"
+    if ($probe.Status -eq "available") {
+        $ResolvedManagerCommands["winget"] = $probe.Path
+        return
+    }
+    if ($probe.Status -eq "broken") {
+        throw "WinGet exists at $($probe.Path), but 'winget --version' failed. Repair App Installer, then run 'win check'."
+    }
+
+    Write-Step "Preparing WinGet"
+    $registerCommand = "Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe"
+    if ($DryRun) {
+        Write-Plan $registerCommand
+        Write-Plan "If registration fails, repair App Installer with Microsoft.WinGet.Client or install it from Microsoft Store"
+        return
+    }
+    if (-not (Test-IsWindowsPlatform)) {
+        throw "WinGet is required and is only available on Windows 10 1809 or later."
+    }
+    if (-not (Get-Command "Add-AppxPackage" -ErrorAction SilentlyContinue)) {
+        throw "WinGet is missing and App Installer could not be registered because Add-AppxPackage is unavailable. Install App Installer from Microsoft Store."
+    }
+
+    try {
+        Add-AppxPackage -RegisterByFamilyName -MainPackage "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe" -ErrorAction Stop
+    } catch {
+        throw "WinGet is missing and App Installer registration failed. Install App Installer from Microsoft Store, or run: Install-Module Microsoft.WinGet.Client -Force -Repository PSGallery; Repair-WinGetPackageManager -AllUsers"
+    }
+    Refresh-ProcessPath
+    $probe = Get-ManagerProbe "winget"
+    if ($probe.Status -ne "available") {
+        throw "App Installer was registered, but WinGet is still unavailable. Open a new PowerShell window and run 'win check'. If it remains missing, repair App Installer with Microsoft.WinGet.Client."
+    }
+    $ResolvedManagerCommands["winget"] = $probe.Path
 }
 
 function Ensure-Mise {
-    if (Test-Command "mise") { return }
+    $probe = Get-ManagerProbe "mise"
+    if ($probe.Status -eq "available") {
+        $ResolvedManagerCommands["mise"] = $probe.Path
+        return
+    }
+    if ($probe.Status -eq "broken") {
+        throw "mise exists at $($probe.Path), but 'mise --version' failed. Fix or remove that installation before continuing."
+    }
 
-    Write-Step "Installing mise with WinGet"
-    Invoke-Native "winget" @(
-        "install", "--id", "jdx.mise", "--exact", "--source", "winget",
-        "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"
-    )
+    Ensure-Scoop
+    Write-Step "Installing mise with Scoop"
+    Invoke-Native (Get-ResolvedManagerCommand "scoop") @("install", "mise")
     if ($DryRun) { return }
 
     Refresh-ProcessPath
-    if (-not (Test-Command "mise")) {
+    $probe = Get-ManagerProbe "mise"
+    if ($probe.Status -ne "available") {
         throw "mise was installed but is not visible in this process. Open a new PowerShell window and run the command again."
     }
+    $ResolvedManagerCommands["mise"] = $probe.Path
 }
 
 function Ensure-Scoop {
-    if (Test-Command "scoop") { return }
+    $probe = Get-ManagerProbe "scoop"
+    if ($probe.Status -eq "available") {
+        $ResolvedManagerCommands["scoop"] = $probe.Path
+        return
+    }
+    if ($probe.Status -eq "broken") {
+        throw "Scoop exists at $($probe.Path), but 'scoop --version' failed. Fix or remove that installation before continuing."
+    }
 
     Write-Step "Preparing the official Scoop installer"
     $installerUri = "https://get.scoop.sh"
     if ($DryRun) {
         Write-Plan "Download and review $installerUri, then execute after confirmation"
         return
+    }
+
+    if ($PSVersionTable.PSVersion -lt [Version]"5.1") {
+        throw "Scoop requires PowerShell 5.1 or newer."
+    }
+    if ($ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
+        throw "Scoop requires PowerShell FullLanguage mode; the current mode is $($ExecutionContext.SessionState.LanguageMode)."
+    }
+    $executionPolicy = Get-ExecutionPolicy
+    if ($executionPolicy -notin @("RemoteSigned", "Unrestricted", "Bypass")) {
+        throw "Scoop requires an executable script policy. Review it, then run: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser"
+    }
+    if (Test-IsWindowsPlatform) {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+        if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            throw "Scoop's normal installer is for a non-admin PowerShell window. Close this elevated window and run Winenv again normally."
+        }
     }
 
     $installerText = Invoke-RestMethod -Uri $installerUri
@@ -1434,9 +1797,11 @@ function Ensure-Scoop {
 
     Invoke-Expression ([string]$installerText)
     Refresh-ProcessPath
-    if (-not (Test-Command "scoop")) {
+    $probe = Get-ManagerProbe "scoop"
+    if ($probe.Status -ne "available") {
         throw "Scoop was installed but is not visible in this process. Open a new PowerShell window and run the command again."
     }
+    $ResolvedManagerCommands["scoop"] = $probe.Path
 }
 
 function Enable-WinenvInPowerShell {
@@ -1493,7 +1858,7 @@ $endMarker
 function Install-WinGetPackage {
     param($Package)
     $source = if ($Package.source) { [string]$Package.source } else { "winget" }
-    Invoke-Native "winget" @(
+    Invoke-Native (Get-ResolvedManagerCommand "winget") @(
         "install", "--id", [string]$Package.id, "--exact", "--source", $source,
         "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"
     )
@@ -1502,7 +1867,7 @@ function Install-WinGetPackage {
 function Install-ScoopPackage {
     param($Package)
     $qualifiedId = if ($Package.bucket) { "$($Package.bucket)/$($Package.id)" } else { [string]$Package.id }
-    Invoke-Native "scoop" @("install", $qualifiedId)
+    Invoke-Native (Get-ResolvedManagerCommand "scoop") @("install", $qualifiedId)
 }
 
 function Install-MisePackage {
@@ -1512,9 +1877,9 @@ function Install-MisePackage {
     )
     $version = if ($Package.version) { [string]$Package.version } else { "latest" }
     if ($ProfileManaged) {
-        Invoke-Native "mise" @("install", "$($Package.id)@$version")
+        Invoke-Native (Get-ResolvedManagerCommand "mise") @("install", "$($Package.id)@$version")
     } else {
-        Invoke-Native "mise" @("use", "--global", "$($Package.id)@$version")
+        Invoke-Native (Get-ResolvedManagerCommand "mise") @("use", "--global", "$($Package.id)@$version")
     }
 }
 
@@ -1558,17 +1923,18 @@ function Install-Packages {
         [array]$Packages,
         [switch]$ProfileManagedMise
     )
-    $packages = @($Packages)
+    $runtimePlan = Resolve-RuntimeInstallPlan @($Packages)
+    $packages = @($runtimePlan.Packages)
     $owners = @($packages | ForEach-Object { $_.owner } | Sort-Object -Unique)
 
     Ensure-WinGet
     if ($owners -contains "scoop") { Ensure-Scoop }
     if ($owners -contains "mise") { Ensure-Mise }
 
-    if (($owners -contains "scoop") -and (Test-Command "scoop")) {
+    if ($owners -contains "scoop") {
         foreach ($bucket in @($Definition.scoopBuckets)) {
             if ($bucket -ne "main") {
-                Invoke-Native "scoop" @("bucket", "add", [string]$bucket) -IgnoreExitCode
+                Invoke-Native (Get-ResolvedManagerCommand "scoop") @("bucket", "add", [string]$bucket) -IgnoreExitCode
             }
         }
     }
@@ -1586,6 +1952,7 @@ function Install-Packages {
         }
     }
 
+    Assert-RuntimeRequirements @($runtimePlan.VerificationPackages)
     Enable-WinenvInPowerShell
 }
 
@@ -1656,9 +2023,10 @@ function Show-Profile {
     Show-UserProfileStatus
     Write-Host "`nEffective packages"
     Get-SelectedPackages $Definition |
-        Select-Object key, displayName, owner, id,
-            @{Name = "claims"; Expression = { if ($_.psobject.Properties.Name -contains "_claims") { @($_._claims) -join "," } else { "runtime" } }} |
         Sort-Object owner, key |
+        Select-Object key, displayName,
+            @{Name = "provider"; Expression = { if ([bool]$_._runtime) { "$($_.owner) (fallback)" } else { $_.owner } }}, id,
+            @{Name = "claims"; Expression = { if ($_.psobject.Properties.Name -contains "_claims") { @($_._claims) -join "," } else { "runtime" } }} |
         Format-Table -AutoSize
 }
 
@@ -1668,15 +2036,42 @@ function Test-ProfileHealth {
     Write-Host "All active profile claims resolved without ambiguity." -ForegroundColor Green
 
     $selectedPackages = Get-SelectedPackages $Definition
-    $requiredOwners = @($selectedPackages | ForEach-Object { $_.owner } | Sort-Object -Unique)
 
     Write-Step "Checking managers"
-    foreach ($owner in $requiredOwners) {
-        if ($owner -eq "vendor") { continue }
-        $available = Test-Command $owner
-        $status = if ($available) { "available" } else { "missing" }
-        $color = if ($available) { "Green" } else { "Yellow" }
-        Write-Host ("{0,-10} {1}" -f $owner, $status) -ForegroundColor $color
+    Write-Host ("{0,-10} {1,-11} {2,-12} {3}" -f "manager", "status", "version", "path") -ForegroundColor DarkGray
+    $managerProbes = @(@("winget", "scoop", "mise") | ForEach-Object { Get-ManagerProbe $_ })
+    foreach ($probe in $managerProbes) {
+        $version = if ($null -ne $probe.Version) { $probe.Version.ToString() } else { "-" }
+        $path = if ($probe.Path) { $probe.Path } else { "-" }
+        $color = if ($probe.Status -eq "available") { "Green" } else { "Yellow" }
+        Write-Host ("{0,-10} {1,-11} {2,-12} {3}" -f $probe.Name, $probe.Status, $version, $path) -ForegroundColor $color
+        if (@($probe.OtherPaths).Count -gt 0) {
+            Write-Host ("           other paths: {0}" -f (@($probe.OtherPaths) -join " | ")) -ForegroundColor Yellow
+        }
+    }
+
+    Write-Step "Checking Winenv runtime requirements"
+    Write-Host ("{0,-10} {1,-18} {2,-12} {3}" -f "action", "requirement", "version", "path or fallback") -ForegroundColor DarkGray
+    foreach ($package in @($selectedPackages | Where-Object { $null -ne (Get-RuntimeRequirement $_) })) {
+        $probe = Get-RuntimeRequirementProbe $package
+        $version = if ($null -ne $probe.Version) { $probe.Version.ToString() } else { "-" }
+        $action = switch ($probe.Status) {
+            "available" { "reuse" }
+            "missing" { "install" }
+            default { "resolve" }
+        }
+        $location = if ($probe.Status -eq "missing") { "via $($package.owner)" } else { $probe.Path }
+        $color = if ($probe.Status -eq "available") { "Green" } elseif ($probe.Status -eq "missing") { "DarkGray" } else { "Yellow" }
+        Write-Host ("{0,-10} {1,-18} {2,-12} {3}" -f $action, $probe.Name, $version, $location) -ForegroundColor $color
+        if ($probe.Status -eq "outdated") {
+            Write-Host "           requires >= $($probe.MinimumVersion)" -ForegroundColor Yellow
+        }
+        if (@($probe.OtherPaths).Count -gt 0) {
+            Write-Host ("           other paths: {0}" -f (@($probe.OtherPaths) -join " | ")) -ForegroundColor Yellow
+        }
+        if (@($probe.Shadowing).Count -gt 0) {
+            Write-Host ("           same-name aliases/functions ignored: {0}" -f (@($probe.Shadowing) -join " | ")) -ForegroundColor Yellow
+        }
     }
 
     Write-Step "Checking command resolution"
@@ -1689,11 +2084,18 @@ function Test-ProfileHealth {
             }
 
             $paths = @($resolved | ForEach-Object {
-                if ($_.Path) { $_.Path } elseif ($_.Source) { $_.Source } else { $_.Name }
+                $location = if ($_.Path) { $_.Path } elseif ($_.Source) { $_.Source } else { $_.Name }
+                "$($_.CommandType):$location"
             } | Select-Object -Unique)
             $color = if ($paths.Count -gt 1) { "Yellow" } else { "Green" }
             Write-Host ("{0,-12} {1}" -f $command, ($paths -join " | ")) -ForegroundColor $color
         }
+    }
+
+    $miseProbe = @($managerProbes | Where-Object Name -eq "mise" | Select-Object -First 1)
+    if ($miseProbe.Count -gt 0 -and $miseProbe[0].Status -eq "available") {
+        Write-Step "Running mise doctor"
+        Invoke-Native $miseProbe[0].Path @("doctor") -IgnoreExitCode
     }
 }
 
@@ -1701,13 +2103,16 @@ function Update-All {
     param($Definition)
     Update-WinenvSelf
     Ensure-WinGet
+    $wingetCommand = Get-ResolvedManagerCommand "winget"
     Sync-WinenvMiseConfig $Definition
+    $scoopCommand = Get-OptionalManagerCommand "scoop"
+    $miseCommand = Get-OptionalManagerCommand "mise"
 
     Write-Step "Update scope"
     Write-Host "WinGet: every installed package with an available update"
-    if (Test-Command "scoop") { Write-Host "Scoop:  Scoop itself, bucket indexes, and every installed app" }
+    if ($null -ne $scoopCommand) { Write-Host "Scoop:  Scoop itself, bucket indexes, and every installed app" }
     else { Write-Host "Scoop:  skipped (not installed)" -ForegroundColor DarkGray }
-    if (Test-Command "mise") { Write-Host "mise:   every active tool from the mise configuration" }
+    if ($null -ne $miseCommand) { Write-Host "mise:   every active tool from the mise configuration" }
     else { Write-Host "mise:   skipped (not installed)" -ForegroundColor DarkGray }
 
     if (-not (Confirm-Operation "Update everything tracked by the installed package managers?")) {
@@ -1716,23 +2121,23 @@ function Update-All {
     }
 
     Write-Step "Updating all WinGet packages"
-    Invoke-Native "winget" @("source", "update")
-    Invoke-Native "winget" @(
+    Invoke-Native $wingetCommand @("source", "update")
+    Invoke-Native $wingetCommand @(
         "upgrade", "--all", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"
     ) -IgnoreExitCode
 
-    if (Test-Command "scoop") {
+    if ($null -ne $scoopCommand) {
         Write-Step "Updating all Scoop packages"
-        Invoke-Native "scoop" @("update")
-        Invoke-Native "scoop" @("update", "*") -IgnoreExitCode
+        Invoke-Native $scoopCommand @("update")
+        Invoke-Native $scoopCommand @("update", "*") -IgnoreExitCode
     }
 
-    if (Test-Command "mise") {
+    if ($null -ne $miseCommand) {
         Write-Step "Updating all active mise tools"
         $previousAge = $env:MISE_MINIMUM_RELEASE_AGE
         try {
             $env:MISE_MINIMUM_RELEASE_AGE = "0"
-            Invoke-Native "mise" @("up")
+            Invoke-Native $miseCommand @("up")
         } finally {
             $env:MISE_MINIMUM_RELEASE_AGE = $previousAge
         }
@@ -1773,15 +2178,17 @@ function Remove-Package {
         switch ($package.owner) {
             "winget" {
                 Ensure-WinGet
-                Invoke-Native "winget" @("uninstall", "--id", [string]$package.id, "--exact", "--disable-interactivity")
+                Invoke-Native (Get-ResolvedManagerCommand "winget") @("uninstall", "--id", [string]$package.id, "--exact", "--disable-interactivity")
             }
             "scoop" {
-                if (-not (Test-Command "scoop")) { throw "Scoop is unavailable." }
-                Invoke-Native "scoop" @("uninstall", [string]$package.id)
+                $managerCommand = Get-OptionalManagerCommand "scoop"
+                if ($null -eq $managerCommand) { throw "Scoop is unavailable." }
+                Invoke-Native $managerCommand @("uninstall", [string]$package.id)
             }
             "mise" {
-                if (-not (Test-Command "mise")) { throw "mise is unavailable." }
-                Invoke-Native "mise" @("unuse", "--global", [string]$package.id)
+                $managerCommand = Get-OptionalManagerCommand "mise"
+                if ($null -eq $managerCommand) { throw "mise is unavailable." }
+                Invoke-Native $managerCommand @("unuse", "--global", [string]$package.id)
             }
             "vendor" { throw "Vendor-managed packages must be removed according to their recorded instructions." }
         }
@@ -1794,14 +2201,16 @@ function Invoke-Cleanup {
         return
     }
 
-    if (Test-Command "scoop") {
+    $scoopCommand = Get-OptionalManagerCommand "scoop"
+    if ($null -ne $scoopCommand) {
         Write-Step "Cleaning old Scoop versions"
-        Invoke-Native "scoop" @("cleanup", "*")
-        Invoke-Native "scoop" @("cache", "rm", "*")
+        Invoke-Native $scoopCommand @("cleanup", "*")
+        Invoke-Native $scoopCommand @("cache", "rm", "*")
     }
-    if (Test-Command "mise") {
+    $miseCommand = Get-OptionalManagerCommand "mise"
+    if ($null -ne $miseCommand) {
         Write-Step "Pruning unused mise versions"
-        Invoke-Native "mise" @("prune")
+        Invoke-Native $miseCommand @("prune")
     }
 }
 

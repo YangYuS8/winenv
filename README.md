@@ -36,7 +36,10 @@ irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1 | iex
 2. 下载 `winenv-<version>.zip` 和 `SHA256SUMS`；
 3. 校验 SHA-256 后安装到 `%LOCALAPPDATA%\Winenv\versions`；
 4. 建立全局短命令 `win`；
-5. 只安装 `profile.json` 中的 Winenv 运行依赖：PowerShell 7 和 fzf。
+5. 探测 PowerShell 7 和 fzf 的真实可执行文件与版本，兼容版本已经存在时直接复用；
+6. 只为缺失的运行能力安装 `profile.json` 声明的默认包。
+
+WinGet 是 Windows 侧的基础安装通道。找不到 `winget.exe` 时，Winenv 会先按照[微软说明](https://learn.microsoft.com/windows/package-manager/winget/)尝试重新注册 Windows 11 自带的 App Installer；仍不可用时停止并显示 Microsoft Store 与官方修复方式，不会静默提权或安装 PowerShell Gallery 模块。Scoop 只在选中的软件或 mise 确实需要它时安装；安装前会检查[官方要求](https://github.com/ScoopInstaller/Install/blob/master/README.md)中的 PowerShell 版本、语言模式、执行策略和是否错误地运行在管理员窗口中，并且不会擅自修改安全策略。
 
 如果已经准备了用户 profile，可以在首次安装时从本地文件或 HTTPS 链接导入：
 
@@ -112,6 +115,10 @@ win up -y
 
 - PowerShell 7：稳定运行命令及详情预览；
 - fzf：提供交互式搜索、选择和卸载界面。
+
+这两项是“能力要求”，不是对某个安装来源的所有权声明。Winenv 会接受来自 WinGet、Scoop、MSI、ZIP 或其他方式的健康外部可执行文件；当前最低版本为 PowerShell 7.4 和 fzf 0.35，后者是当前界面所用 `--preview-label` 开始提供的版本。复用的软件仍由原来的安装方式更新和卸载，Winenv 不会把它登记成自己安装的包。缺失时才采用 profile 中的 WinGet 包作为默认提供方；旧版、损坏版本或 PATH 中存在多个候选时，`win check` 会显示有效路径和其他路径，自动确认模式不会替用户猜测。
+
+mise 也按同样方式复用任何健康的现有安装。只有找不到 mise 时，Winenv 才按照 [mise 官方在 Windows 上的优先建议](https://mise.jdx.dev/installing-mise.html)，通过 Scoop 安装它。随后 profile 中的开发工具仍交给 mise 自己进行版本安装、切换、升级和清理。
 
 用户可以按同一 schema 在仓库外编写 JSON。它既可以只留在自己电脑上，也可以放在 GitHub、Gist 或自己的站点上分享：
 
