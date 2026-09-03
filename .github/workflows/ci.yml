@@ -17,3 +17,7 @@ jobs:
       - name: Test PowerShell and profile files
         shell: pwsh
         run: ./scripts/test.ps1
+
+      - name: Test fresh-system Windows PowerShell compatibility
+        shell: powershell
+        run: ./scripts/test-windows-powershell.ps1
