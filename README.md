@@ -84,6 +84,10 @@ win bucket mybucket https://github.com/user/scoop-bucket.git
 win add C:\Users\me\Downloads\my-app.json
 win add https://example.com/my-app.json
 
+# 只有原始 Windows 安装器时，先检查再启动
+win add C:\Users\me\Downloads\setup.exe
+win add C:\Users\me\Downloads\setup.msi
+
 # 本地和线上 profile 可以同时启用；停用不会卸载软件
 win use C:\Users\me\my-winenv.json
 win use https://example.com/my-winenv.json
@@ -157,6 +161,50 @@ win add https://example.com/my-app.json
 
 Winenv 只接受本地 `.json` 或 HTTPS `.json`，限制为 1 MiB，并在安装前显示来源、版本和实际安装快照的 SHA-256。确认后仍由 Scoop 完成安装和卸载登记。单独 manifest 没有稳定的 bucket 更新源；长期使用、需要 `scoop update` 自动发现新版本时，应把 manifest 放进自己或可信维护者的 bucket。
 
+## 原始 EXE、MSI 与本地 WinGet manifest
+
+三个目录都找不到，但手上已经有安装器时，可以把本地文件直接交给 Winenv：
+
+```powershell
+win add C:\Users\me\Downloads\setup.exe
+win add C:\Users\me\Downloads\setup.msi
+```
+
+Winenv 不会猜 `/S`、`/silent` 等没有统一标准的参数。它会先读取文件大小、产品版本、SHA-256、Authenticode 签名状态和发布者，再让你确认。EXE 按发布者原本的界面运行；MSI 通过 Windows 自带的 [`msiexec.exe`](https://learn.microsoft.com/windows-server/administration/windows-commands/msiexec) 运行，默认加 `/norestart`，并把详细日志写到 `%LOCALAPPDATA%\Winenv\logs`。
+
+已知安装器参数时可以逐项传入；已从可信页面获得哈希时可以钉住文件内容：
+
+```powershell
+win add .\setup.exe -Args '/S','/norestart'
+win add .\setup.msi -Args '/passive','INSTALLDIR=C:\Tools\Example'
+win add .\setup.exe -Hash 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+`-y` 只会自动接受具有有效 Authenticode 签名的安装器，或者已通过 `-Hash` 精确校验的未签名文件。签名损坏、不受信任或无法验证的文件仍要求人工查看；哈希不匹配时始终停止。Winenv 暂不直接下载 EXE/MSI，先下载到本地不会绕开原有下载流程，也能让你确认最终取得的实际文件。
+
+裸安装器是一次安全交接，不会被伪装成新的 Winenv 包管理器。MSI 自身包含安装、修改和卸载信息；EXE 是否支持卸载、升级或静默运行仍由发布者决定。只要安装器把应用登记到 Windows“已安装的应用”，[WinGet 就能看到并卸载它](https://learn.microsoft.com/windows/package-manager/winget/uninstall)，因此之后可以使用：
+
+```powershell
+win rm 应用名
+```
+
+`win up` 只有在这个已安装应用能与 WinGet 公共目录匹配时才可以替它升级，否则继续使用软件自带更新器或重新运行新安装器。
+
+希望在多台机器上稳定复现时，不应长期保存一条裸 EXE 命令。优先使用 [WinGetCreate](https://learn.microsoft.com/windows/package-manager/package/manifest) 制作包含安装地址、SHA-256、安装参数和版本信息的 WinGet manifest，然后直接交给 Winenv：
+
+```powershell
+win add C:\Users\me\manifests\Example.App.yaml
+win add C:\Users\me\manifests\Example.App
+```
+
+Winenv 会列出每个 YAML 文件及其 SHA-256，确认后依次执行 `winget validate` 和 [`winget install --manifest`](https://learn.microsoft.com/windows/package-manager/winget/install#local-install)。微软把本地 manifest 视为管理员控制的安全能力；第一次使用前，需要在管理员 PowerShell 中执行一次：
+
+```powershell
+winget settings --enable LocalManifestFiles
+```
+
+Winenv 会检测这项设置，但不会自行提权或悄悄更改管理员安全设置。多文件 manifest 直接传包含 YAML 文件的目录。
+
 `up` 会先更新 Winenv 本身，再调用 `winget upgrade --all`、`scoop update *` 和 `mise up`，因此管理器中已经登记、但不在 profile 的软件也会更新。它尊重 WinGet pin、Scoop hold 和 mise 配置。mise 会按自己的宽限期清理已被升级替换、且不再被任何配置引用的旧版本；真正需要保留的版本应在全局或项目 mise 配置中明确指定。`win clean` 只是用于立即执行清理。更新前会展示范围；除非传入 `-y`，否则会要求确认。
 
 ## Profile 分层
@@ -220,7 +268,7 @@ win add -P base,desktop,development
 
 这套顺序是个人默认策略，不是需要人工维护的完整映射表。搜索结果始终保留实际来源，由你在安装时做最后选择。只有写入个人基线的包需要遵守“一个命令一个默认所有者”；`win check` 会检查基线内的冲突，并展示 Windows 当前实际解析到的全部路径。
 
-当前 `vendor` 仍只记录人工安装说明。任意 EXE/MSI 的静默参数、返回码、卸载方式和升级语义差异很大，因此这一版不会把不透明安装器伪装成可复现包；优先使用上游 Scoop manifest、自建 bucket，或先为软件补一份可审查的 manifest。
+当前 `vendor` 仍只记录人工安装说明。需要自动复现的软件应优先使用上游 Scoop manifest、自建 bucket 或本地 WinGet manifest；裸 EXE/MSI 入口只负责检查并运行安装器，不会把发布者没有声明的升级、检测和卸载语义编造出来。
 
 ## 目录
 
@@ -242,10 +290,11 @@ winenv/
 %LOCALAPPDATA%\Winenv\state.json
 %LOCALAPPDATA%\Winenv\config.json
 %LOCALAPPDATA%\Winenv\profiles\*.json
+%LOCALAPPDATA%\Winenv\logs\*.log
 %USERPROFILE%\.config\mise\conf.d\winenv.toml
 ```
 
-`state.json` 只记录已执行的 migration；`config.json` 记录 profile 注册表和本机冲突选择；`profiles` 保存稳定快照；`winenv.toml` 是根据当前有效声明生成的 mise 配置片段。它们都不存储密码或登录状态。旧版单一 `user-profile.json` 会在首次运行时迁移成独立快照，原文件保留不删。
+`state.json` 只记录已执行的 migration；`config.json` 记录 profile 注册表和本机冲突选择；`profiles` 保存稳定快照；`logs` 保存 MSI 详细安装日志；`winenv.toml` 是根据当前有效声明生成的 mise 配置片段。它们都不存储密码或登录状态。旧版单一 `user-profile.json` 会在首次运行时迁移成独立快照，原文件保留不删。
 
 ## 版本和发布
 
@@ -280,7 +329,7 @@ chore: 更新维护配置                         # 不发布
 - 删除 Windows 内置组件；
 - 修改 Defender、BitLocker、Windows Update 策略；
 - 自动安装驱动；
-- 直接执行任意本地 EXE/MSI 安装器；
+- 自动猜测任意 EXE 的静默、更新或卸载参数；
 - 保存登录令牌和软件私有数据；
 - 绕过各包管理器自身的保留、pin、hold 或清理策略。
 

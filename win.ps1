@@ -11,6 +11,10 @@ param(
     [Parameter(Position = 2)]
     [Alias("Url")]
     [string]$Location,
+    [Alias("Args")]
+    [string[]]$InstallerArguments,
+    [Alias("Hash")]
+    [string]$Sha256,
     [Alias("From")]
     [ValidateSet("all", "managed", "winget", "scoop", "mise")]
     [string]$Manager = "all",
@@ -21,6 +25,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$HasInstallerArguments = $PSBoundParameters.ContainsKey("InstallerArguments")
 $ProfilePath = Join-Path $PSScriptRoot "profile.json"
 $VersionPath = Join-Path $PSScriptRoot "VERSION"
 $MigrationPath = Join-Path $PSScriptRoot "migrations"
@@ -29,6 +34,7 @@ $StatePath = Join-Path $StateRoot "state.json"
 $ConfigPath = Join-Path $StateRoot "config.json"
 $LocalUserProfilePath = Join-Path $StateRoot "user-profile.json"
 $ProfilesRoot = Join-Path $StateRoot "profiles"
+$InstallerLogRoot = Join-Path $StateRoot "logs"
 $AllowedOwners = @("winget", "scoop", "mise", "vendor")
 $ResolvedManagerCommands = @{}
 $ApprovedScoopBucketSources = @{}
@@ -104,6 +110,10 @@ Winenv keeps Windows software simple.
 
   win [software]       Search, select, and install
   win add [software]   Apply the profile, or install one known package
+  win add <setup.exe|setup.msi>
+                       Inspect and run a local Windows installer
+  win add <manifest.yaml|folder>
+                       Install from a local WinGet manifest
   win add <file.json>  Install a local or HTTPS Scoop manifest
   win bucket           List enabled Scoop buckets
   win bucket <name> [https-url]
@@ -120,7 +130,8 @@ Winenv keeps Windows software simple.
   win ver              Print the Winenv version
   win help             Show this help
 
-Useful shortcuts: -From winget|scoop|mise, -n (dry run), -y (confirm).
+Useful shortcuts: -From winget|scoop|mise, -n (dry run), -y (confirm),
+                  -Hash <sha256>, -Args <installer-arguments>.
 "@
 }
 
@@ -2070,6 +2081,288 @@ function Invoke-ScoopBucketCommand {
     if (-not $DryRun) { Write-Host "Scoop bucket '$($bucket.Name)' is ready." -ForegroundColor Green }
 }
 
+function Get-ReferenceExtension {
+    param([string]$Reference)
+    try {
+        $uri = [Uri]$Reference
+        if ($uri.IsAbsoluteUri -and $Reference -match "^[a-zA-Z][a-zA-Z0-9+.-]*://") {
+            return [IO.Path]::GetExtension($uri.AbsolutePath)
+        }
+    } catch {}
+    return [IO.Path]::GetExtension($Reference)
+}
+
+function Test-WindowsInstallerReference {
+    param([string]$Reference)
+    $extension = Get-ReferenceExtension $Reference
+    return $extension -in @(".exe", ".msi")
+}
+
+function Test-WinGetManifestReference {
+    param([string]$Reference)
+    if (Test-Path -LiteralPath $Reference -PathType Container) {
+        return @(Get-ChildItem -LiteralPath $Reference -File -Recurse | Where-Object { $_.Extension -in @(".yaml", ".yml") }).Count -gt 0
+    }
+    return (Get-ReferenceExtension $Reference) -in @(".yaml", ".yml")
+}
+
+function Get-InstallerInspection {
+    param([string]$Path)
+
+    $item = Get-Item -LiteralPath $Path
+    $versionInfo = $item.VersionInfo
+    $signatureStatus = "Unavailable"
+    $publisher = ""
+    $signatureMessage = "Authenticode inspection is only available on Windows."
+    if (Test-IsWindowsPlatform) {
+        try {
+            $signature = Get-AuthenticodeSignature -LiteralPath $Path -ErrorAction Stop
+            $signatureStatus = [string]$signature.Status
+            $signatureMessage = [string]$signature.StatusMessage
+            if ($null -ne $signature.SignerCertificate) {
+                $publisher = $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+            }
+        } catch {
+            $signatureStatus = "Error"
+            $signatureMessage = $_.Exception.Message
+        }
+    }
+    return [pscustomobject]@{
+        Path = $item.FullName
+        Type = $item.Extension.TrimStart(".").ToUpperInvariant()
+        Size = [long]$item.Length
+        Sha256 = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        Product = if ($null -ne $versionInfo) { [string]$versionInfo.ProductName } else { "" }
+        Version = if ($null -ne $versionInfo) { [string]$versionInfo.ProductVersion } else { "" }
+        SignatureStatus = $signatureStatus
+        SignatureMessage = $signatureMessage
+        Publisher = $publisher
+    }
+}
+
+function ConvertTo-WindowsCommandLineArgument {
+    param([AllowEmptyString()][string]$Value)
+
+    if ($Value.Length -eq 0) { return '""' }
+    if ($Value -notmatch '[\s"]') { return $Value }
+    $builder = New-Object Text.StringBuilder
+    [void]$builder.Append('"')
+    $backslashes = 0
+    foreach ($character in $Value.ToCharArray()) {
+        if ($character -eq [char]92) {
+            $backslashes++
+            continue
+        }
+        if ($character -eq [char]34) {
+            [void]$builder.Append(('\' * (($backslashes * 2) + 1)))
+            [void]$builder.Append('"')
+            $backslashes = 0
+            continue
+        }
+        if ($backslashes -gt 0) {
+            [void]$builder.Append(('\' * $backslashes))
+            $backslashes = 0
+        }
+        [void]$builder.Append($character)
+    }
+    if ($backslashes -gt 0) { [void]$builder.Append(('\' * ($backslashes * 2))) }
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
+function Join-WindowsCommandLineArguments {
+    param([string[]]$Arguments)
+    return (@($Arguments | ForEach-Object { ConvertTo-WindowsCommandLineArgument ([string]$_) }) -join " ")
+}
+
+function Invoke-WindowsInstallerProcess {
+    param(
+        [string]$Path,
+        [string]$Type,
+        [string[]]$Arguments,
+        [string]$LogPath = ""
+    )
+
+    if ($Type -eq "MSI") {
+        $command = "msiexec.exe"
+        $processArguments = @("/i", $Path)
+        if (@($Arguments | Where-Object { $_ -match "^/(no|prompt|force)restart$" }).Count -eq 0) {
+            $processArguments += "/norestart"
+        }
+        if (@($Arguments | Where-Object { $_ -match "^/l" }).Count -eq 0) {
+            $processArguments += @("/L*V", $LogPath)
+        }
+        $processArguments += @($Arguments)
+        $workingDirectory = Split-Path -Parent $Path
+    } else {
+        $command = $Path
+        $processArguments = @($Arguments)
+        $workingDirectory = Split-Path -Parent $Path
+    }
+    $argumentLine = Join-WindowsCommandLineArguments $processArguments
+    $commandLine = ConvertTo-WindowsCommandLineArgument $command
+    if ($argumentLine) { $commandLine += " $argumentLine" }
+    Write-Plan $commandLine
+    if ($DryRun) { return 0 }
+    if (-not (Test-IsWindowsPlatform)) { throw "EXE and MSI installers can only run on Windows." }
+
+    if ($Type -eq "MSI") {
+        New-Item -ItemType Directory -Path (Split-Path -Parent $LogPath) -Force | Out-Null
+    }
+    try {
+        $processParameters = @{
+            FilePath = $command
+            WorkingDirectory = $workingDirectory
+            Wait = $true
+            PassThru = $true
+        }
+        if (-not [string]::IsNullOrWhiteSpace($argumentLine)) {
+            $processParameters.ArgumentList = $argumentLine
+        }
+        $process = Start-Process @processParameters
+        $process.WaitForExit()
+        return [int]$process.ExitCode
+    } catch {
+        throw "Unable to start the $Type installer: $($_.Exception.Message)"
+    }
+}
+
+function Install-LocalWindowsInstaller {
+    param([string]$Reference)
+
+    if ($Reference -match "^[a-zA-Z][a-zA-Z0-9+.-]*://") {
+        throw "Direct EXE/MSI installation accepts local files only. Download the installer first so its signature and hash can be reviewed."
+    }
+    if (-not (Test-Path -LiteralPath $Reference -PathType Leaf)) {
+        throw "Windows installer was not found: $Reference"
+    }
+    $path = (Resolve-Path -LiteralPath $Reference).Path
+    $inspection = Get-InstallerInspection $path
+    if ($inspection.Type -notin @("EXE", "MSI")) { throw "Unsupported Windows installer type: $($inspection.Type)" }
+
+    $expectedHashVerified = $false
+    if (-not [string]::IsNullOrWhiteSpace($Sha256)) {
+        $normalizedExpectedHash = $Sha256.Trim().ToLowerInvariant()
+        if ($normalizedExpectedHash -notmatch "^[a-f0-9]{64}$") { throw "-Hash must be a 64-character SHA-256 value." }
+        if ($normalizedExpectedHash -ne $inspection.Sha256) {
+            throw "Installer SHA-256 mismatch. Expected $normalizedExpectedHash but found $($inspection.Sha256)."
+        }
+        $expectedHashVerified = $true
+    }
+
+    Write-Step "Windows installer preview"
+    $sizeLabel = if ($inspection.Size -ge 1MB) {
+        "$([Math]::Round($inspection.Size / 1MB, 2)) MiB"
+    } elseif ($inspection.Size -ge 1KB) {
+        "$([Math]::Round($inspection.Size / 1KB, 2)) KiB"
+    } else {
+        "$($inspection.Size) bytes"
+    }
+    Write-Host "File:       $($inspection.Path)"
+    Write-Host "Type:       $($inspection.Type)"
+    Write-Host "Size:       $sizeLabel"
+    if ($inspection.Product) { Write-Host "Product:    $($inspection.Product)" }
+    if ($inspection.Version) { Write-Host "Version:    $($inspection.Version)" }
+    Write-Host "SHA-256:    $($inspection.Sha256)"
+    if ($expectedHashVerified) { Write-Host "Hash check: matched -Hash" -ForegroundColor Green }
+    Write-Host "Signature:  $($inspection.SignatureStatus)"
+    if ($inspection.Publisher) { Write-Host "Publisher:  $($inspection.Publisher)" }
+    if ($inspection.SignatureStatus -ne "Valid") {
+        Write-Host $inspection.SignatureMessage -ForegroundColor Yellow
+    }
+    if ($HasInstallerArguments) {
+        Write-Host "Arguments:  $(Join-WindowsCommandLineArguments $InstallerArguments)"
+    }
+
+    $safeForUnattended = $inspection.SignatureStatus -eq "Valid" -or ($inspection.SignatureStatus -eq "NotSigned" -and $expectedHashVerified)
+    if ($Yes -and -not $DryRun -and -not $safeForUnattended) {
+        throw "This installer is not covered by a valid Authenticode signature or a pinned hash for an unsigned file. Run interactively to review it, or provide a trusted -Hash value."
+    }
+    if (-not (Confirm-Operation "Run this $($inspection.Type) installer?")) {
+        Write-Host "Installer launch cancelled."
+        return
+    }
+
+    $logPath = if ($inspection.Type -eq "MSI") {
+        Join-Path $InstallerLogRoot ("msi-{0}-{1}.log" -f (Get-Date -Format "yyyyMMdd-HHmmssfff"), $inspection.Sha256.Substring(0, 12))
+    } else { "" }
+    $effectiveInstallerArguments = if ($HasInstallerArguments) { @($InstallerArguments) } else { @() }
+    $exitCode = Invoke-WindowsInstallerProcess $path $inspection.Type $effectiveInstallerArguments $logPath
+    if ($DryRun) { return }
+    if ($exitCode -notin @(0, 1641, 3010)) {
+        $logHint = if ($logPath) { " MSI log: $logPath" } else { "" }
+        throw "$($inspection.Type) installer exited with code $exitCode.$logHint"
+    }
+    if ($exitCode -in @(1641, 3010)) {
+        Write-Host "Installation completed and Windows reports that a restart is required." -ForegroundColor Yellow
+    } else {
+        Write-Host "Installer completed successfully." -ForegroundColor Green
+    }
+    if ($logPath) { Write-Host "MSI log: $logPath" }
+    Write-Host "If the installer registered the app with Windows, it will appear in 'win rm'." -ForegroundColor DarkGray
+}
+
+function Get-WinGetManifestFiles {
+    param([string]$Path)
+    if (Test-Path -LiteralPath $Path -PathType Container) {
+        return @(Get-ChildItem -LiteralPath $Path -File -Recurse | Where-Object { $_.Extension -in @(".yaml", ".yml") } | Sort-Object FullName)
+    }
+    return @(Get-Item -LiteralPath $Path)
+}
+
+function Test-WinGetLocalManifestEnabled {
+    param([string]$Command)
+    $result = Invoke-CapturedCommand $Command @("settings", "export")
+    if ($result.ExitCode -ne 0) { return $false }
+    try {
+        $settings = (@($result.Lines | ForEach-Object { [string]$_ }) -join "`n") | ConvertFrom-Json -ErrorAction Stop
+        $value = $settings.adminSettings.LocalManifestFiles
+        return $value -eq $true -or [string]$value -match "^(true|enabled)$"
+    } catch {
+        return $false
+    }
+}
+
+function Install-WinGetManifest {
+    param([string]$Reference)
+
+    if ($Reference -match "^[a-zA-Z][a-zA-Z0-9+.-]*://") {
+        throw "WinGet local manifests must be a local YAML file or directory. Clone or download the manifest first."
+    }
+    if (-not (Test-Path -LiteralPath $Reference)) { throw "WinGet manifest was not found: $Reference" }
+    $path = (Resolve-Path -LiteralPath $Reference).Path
+    $files = @(Get-WinGetManifestFiles $path)
+    if ($files.Count -eq 0 -or @($files | Where-Object { $_.Extension -notin @(".yaml", ".yml") }).Count -gt 0) {
+        throw "A WinGet manifest must be a YAML file or a directory containing YAML manifests."
+    }
+
+    Write-Step "Local WinGet manifest preview"
+    Write-Host "Path: $path"
+    $files | ForEach-Object {
+        [pscustomobject]@{
+            File = $_.Name
+            Size = $_.Length
+            Sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+    } | Format-Table -AutoSize
+    Write-Host "WinGet manifests select and run installers. Only continue if you trust these local files and their installer URLs." -ForegroundColor Yellow
+    if (-not (Confirm-Operation "Validate and install this local WinGet manifest?")) {
+        Write-Host "Manifest installation cancelled."
+        return
+    }
+
+    Ensure-WinGet
+    $wingetCommand = Get-ResolvedManagerCommand "winget"
+    if (-not $DryRun -and -not (Test-WinGetLocalManifestEnabled $wingetCommand)) {
+        throw "WinGet local manifests are disabled. Run this once from an administrator PowerShell, then retry: winget settings --enable LocalManifestFiles"
+    }
+    Invoke-Native $wingetCommand @("validate", $path)
+    Invoke-Native $wingetCommand @(
+        "install", "--manifest", $path, "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"
+    )
+    if (-not $DryRun) { Write-Host "Local WinGet manifest installed successfully." -ForegroundColor Green }
+}
+
 function Test-ScoopManifestReference {
     param([string]$Reference)
 
@@ -2341,8 +2634,25 @@ function Install-Packages {
 function Install-SelectedPackages {
     param($Definition)
     if ([string]::IsNullOrWhiteSpace($Target)) {
+        if ($HasInstallerArguments -or -not [string]::IsNullOrWhiteSpace($Sha256)) {
+            throw "-Args and -Hash can only be used with a direct EXE or MSI installer."
+        }
         Sync-WinenvMiseConfig $Definition
         Install-Packages $Definition @(Get-SelectedPackages $Definition) -ProfileManagedMise:(!$Profiles -or $Profiles.Count -eq 0)
+        return
+    }
+
+    if (Test-WindowsInstallerReference $Target) {
+        Install-LocalWindowsInstaller $Target
+        return
+    }
+
+    if ($HasInstallerArguments -or -not [string]::IsNullOrWhiteSpace($Sha256)) {
+        throw "-Args and -Hash can only be used with a direct EXE or MSI installer."
+    }
+
+    if (Test-WinGetManifestReference $Target) {
+        Install-WinGetManifest $Target
         return
     }
 

@@ -52,6 +52,8 @@ $testSharedProfilePath = Join-Path $testLocalAppData "test-shared-profile.json"
 $testConflictProfilePath = Join-Path $testLocalAppData "test-conflict-profile.json"
 $testProviderConflictProfilePath = Join-Path $testLocalAppData "test-provider-conflict-profile.json"
 $testScoopManifestPath = Join-Path $testLocalAppData "sample-app.json"
+$testWindowsInstallerPath = Join-Path $testLocalAppData "sample-installer.exe"
+$testWinGetManifestPath = Join-Path $testLocalAppData "sample-installer.yaml"
 New-Item -ItemType Directory -Path $testLocalAppData -Force | Out-Null
 $testBinPath = Join-Path $testLocalAppData "bin"
 New-Item -ItemType Directory -Path $testBinPath -Force | Out-Null
@@ -129,6 +131,18 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     hash = "0123456789abcdef"
     bin = "sample.exe"
 } | ConvertTo-Json -Depth 8 | Set-Content -Path $testScoopManifestPath -Encoding UTF8
+Set-Content -LiteralPath $testWindowsInstallerPath -Value "route test installer" -Encoding ASCII
+@(
+    "PackageIdentifier: Example.Sample",
+    "PackageVersion: 1.0.0",
+    "PackageLocale: en-US",
+    "Publisher: Example",
+    "PackageName: Sample",
+    "License: Proprietary",
+    "ShortDescription: Route test manifest",
+    "ManifestType: defaultLocale",
+    "ManifestVersion: 1.6.0"
+) | Set-Content -LiteralPath $testWinGetManifestPath -Encoding UTF8
 
 function global:winget {
     switch ($args[0]) {
@@ -206,6 +220,7 @@ function global:Read-Host {
 
 & (Join-Path $PSScriptRoot "test-requirements.ps1")
 & (Join-Path $PSScriptRoot "test-scoop-sources.ps1")
+& (Join-Path $PSScriptRoot "test-installers.ps1")
 
 $runtimeList = (& (Join-Path $root "win.ps1") list | Out-String -Width 4096)
 if ($runtimeList -notmatch "PowerShell 7" -or $runtimeList -notmatch "junegunn.fzf" -or $runtimeList -match "Node.js") {
@@ -396,6 +411,15 @@ if ($localManifestPlan -notmatch "Scoop manifest preview" -or $localManifestPlan
 $remoteManifestPlan = (& (Join-Path $root "win.ps1") add "https://packages.example/sample-app.json?token=test-secret" -n 6>&1 | Out-String -Width 4096)
 if ($remoteManifestPlan -notmatch "Scoop manifest preview" -or $remoteManifestPlan -match "test-secret" -or $remoteManifestPlan -notmatch "https://packages\.example/sample-app\.json") {
     throw "The HTTPS Scoop manifest route did not sanitize its displayed source."
+}
+$installerHash = (Get-FileHash -LiteralPath $testWindowsInstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$installerPlan = (& (Join-Path $root "win.ps1") add $testWindowsInstallerPath -Hash $installerHash -Args "/S","INSTALLDIR=C:\Program Files\Sample" -n 6>&1 | Out-String -Width 4096)
+if ($installerPlan -notmatch "Windows installer preview" -or $installerPlan -notmatch "Hash check: matched" -or $installerPlan -notmatch "sample-installer\.exe" -or $installerPlan -notmatch '"INSTALLDIR=') {
+    throw "The direct EXE route did not inspect the installer, verify its hash, and preserve its arguments."
+}
+$winGetManifestPlan = (& (Join-Path $root "win.ps1") add $testWinGetManifestPath -n 6>&1 | Out-String -Width 4096)
+if ($winGetManifestPlan -notmatch "Local WinGet manifest preview" -or $winGetManifestPlan -notmatch "winget validate" -or $winGetManifestPlan -notmatch "winget install --manifest") {
+    throw "The local WinGet manifest route did not preview, validate, and plan installation."
 }
 $updatePlan = (& (Join-Path $root "win.ps1") up -n 6>&1 | Out-String -Width 4096)
 if ($updatePlan -notmatch "winget(?:\.exe)?\s+upgrade --all" -or $updatePlan -notmatch "scoop update \*" -or $updatePlan -notmatch "mise up") {
