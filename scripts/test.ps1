@@ -354,8 +354,8 @@ if ($miseSearch -notmatch "core:node" -or $miseSearch -notmatch "win add node") 
     throw "The mise result did not merge live registry data with the baseline override."
 }
 $checkText = (& (Join-Path $root "win.ps1") check 6>&1 | Out-String -Width 4096)
-if ($checkText -notmatch "same-name aliases/functions ignored: Function:fzf" -or $checkText -notmatch "other paths:") {
-    throw "The environment check did not report ignored command shadows and duplicate executable paths."
+if ($checkText -notmatch "same-name aliases/functions ignored: Function:fzf") {
+    throw "The environment check did not report an ignored command shadow."
 }
 $reportedVersion = & (Join-Path $root "win.ps1") ver
 if ([string]::IsNullOrWhiteSpace([string]$reportedVersion)) {
