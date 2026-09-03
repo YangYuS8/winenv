@@ -1,3 +1,10 @@
+## [0.4.1](https://github.com/YangYuS8/winenv/compare/v0.4.0...v0.4.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* follow mise automatic pruning policy ([71bf36b](https://github.com/YangYuS8/winenv/commit/71bf36ba148963bc25329dc5e709acc5e111371a))
+
 # [0.4.0](https://github.com/YangYuS8/winenv/compare/v0.3.0...v0.4.0) (2026-09-03)
 
 
