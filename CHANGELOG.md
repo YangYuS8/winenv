@@ -1,3 +1,10 @@
+# [0.11.0](https://github.com/YangYuS8/winenv/compare/v0.10.0...v0.11.0) (2026-09-03)
+
+
+### Features
+
+* handle local Windows installers ([a78dab8](https://github.com/YangYuS8/winenv/commit/a78dab81339276436a99ea287b677b14eaa558f5))
+
 # [0.10.0](https://github.com/YangYuS8/winenv/compare/v0.9.0...v0.10.0) (2026-09-03)
 
 
