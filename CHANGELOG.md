@@ -1,3 +1,10 @@
+## [0.5.1](https://github.com/YangYuS8/winenv/compare/v0.5.0...v0.5.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* keep user profiles out of releases ([a005e6b](https://github.com/YangYuS8/winenv/commit/a005e6b03773b5fec1d9d7c5c81dcad4dcff1d31))
+
 # [0.5.0](https://github.com/YangYuS8/winenv/compare/v0.4.1...v0.5.0) (2026-09-03)
 
 
