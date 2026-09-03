@@ -45,6 +45,9 @@ irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1 | iex
 ## 日常使用
 
 ```powershell
+# 打开可搜索、多选、预览详情的终端应用商店
+win store
+
 # 同时搜索 Winenv 清单、WinGet、Scoop 和 mise
 win search ripgrep
 
@@ -82,6 +85,8 @@ win clean
 ```
 
 完整动作名仍然可用，例如 `win update`、`win install` 和 `win remove vscode`。
+
+`store` 是参考 Omarchy 包选择器实现的交互入口：直接输入关键词模糊搜索，用 `Tab` 多选、`Enter` 安装、`Alt-P` 切换详情预览、`Alt-J/K` 滚动预览，按 `Esc` 取消。它只展示 `profile.json` 中已经确认唯一管理器的软件；`win browse` 和不带关键词的 `win search` 也会打开同一个界面。如果当前只安装了 Winenv 本体而缺少界面依赖，先执行 `win add fzf`。
 
 `search` 参考 Omarchy 的包选择器，不自行维护一份容易过期的远程索引：它先显示 `profile.json` 中已经确定归属的软件，再查询各个包管理器的实时目录。清单中的结果会直接给出 `win add <key>`；外部目录结果用于确认准确的包 ID 和应该使用的管理器，再决定是否将它纳入 `profile.json`。使用 `-Manager managed|winget|scoop|mise` 可以缩小搜索范围。
 

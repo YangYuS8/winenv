@@ -46,8 +46,18 @@ if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
 function global:winget {}
 function global:scoop {}
 function global:mise {}
+function global:fzf {
+    begin { $rows = @() }
+    process { $rows += [string]$_ }
+    end {
+        $global:LASTEXITCODE = 0
+        $rows | Where-Object { $_ -match "^vscode`t" } | Select-Object -First 1
+    }
+}
 
 & (Join-Path $root "win.ps1") list
+& (Join-Path $root "win.ps1") store -DryRun
+& (Join-Path $root "win.ps1") info vscode -DryRun
 $managedSearch = (& (Join-Path $root "win.ps1") search ripgrep -Manager managed | Out-String)
 if ($managedSearch -notmatch "ripgrep" -or $managedSearch -notmatch "win add ripgrep") {
     throw "Managed package search did not return an installable result."

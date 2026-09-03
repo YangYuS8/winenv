@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("list", "ls", "search", "find", "doctor", "check", "install", "add", "update", "up", "remove", "rm", "cleanup", "clean", "migrate", "version", "self-update", "selfup")]
+    [ValidateSet("list", "ls", "store", "browse", "search", "find", "info", "show", "doctor", "check", "install", "add", "update", "up", "remove", "rm", "cleanup", "clean", "migrate", "version", "self-update", "selfup")]
     [string]$Action = "list",
 
     [string[]]$Profiles,
@@ -23,7 +23,9 @@ $StatePath = Join-Path $StateRoot "state.json"
 $AllowedOwners = @("winget", "scoop", "mise", "vendor")
 $ActionAliases = @{
     "ls" = "list"
+    "browse" = "store"
     "find" = "search"
+    "show" = "info"
     "check" = "doctor"
     "add" = "install"
     "up" = "update"
@@ -158,7 +160,8 @@ function Test-PackageMatch {
 function Search-PackageCatalogs {
     param($Definition)
     if ([string]::IsNullOrWhiteSpace($Target)) {
-        throw "search requires a query. Example: win search ripgrep"
+        Open-PackageStore $Definition
+        return
     }
 
     Write-Step "Managed profile"
@@ -233,6 +236,127 @@ function Search-PackageCatalogs {
     }
 
     Write-Host "`nUse -Manager managed|winget|scoop|mise to narrow the next search." -ForegroundColor DarkGray
+}
+
+function Show-PackageInfo {
+    param($Definition)
+    if ([string]::IsNullOrWhiteSpace($Target)) {
+        throw "info requires a managed package key. Example: win info vscode"
+    }
+
+    $package = @($Definition.packages | Where-Object { $_.key -eq $Target })
+    if ($package.Count -ne 1) {
+        throw "Unknown or ambiguous package key: $Target"
+    }
+    $package = $package[0]
+
+    Write-Host $package.displayName -ForegroundColor Cyan
+    Write-Host ("Key:      {0}" -f $package.key)
+    Write-Host ("Manager:  {0}" -f $package.owner)
+    Write-Host ("Package:  {0}" -f $package.id)
+    Write-Host ("Profiles: {0}" -f (@($package.profiles) -join ", "))
+    if (@($package.commands).Count -gt 0) {
+        Write-Host ("Commands: {0}" -f (@($package.commands) -join ", "))
+    }
+    if ($package.instructions) {
+        Write-Host "`n$($package.instructions)"
+    }
+
+    Write-Host "`nPackage details" -ForegroundColor DarkCyan
+    switch ($package.owner) {
+        "winget" {
+            if (Test-Command "winget") {
+                $source = if ($package.source) { [string]$package.source } else { "winget" }
+                Invoke-Native "winget" @(
+                    "show", "--id", [string]$package.id, "--exact", "--source", $source,
+                    "--accept-source-agreements", "--disable-interactivity"
+                ) -IgnoreExitCode
+            } else {
+                Write-Host "WinGet is unavailable."
+            }
+        }
+        "scoop" {
+            if (Test-Command "scoop") {
+                $qualifiedId = if ($package.bucket) { "$($package.bucket)/$($package.id)" } else { [string]$package.id }
+                Invoke-Native "scoop" @("info", $qualifiedId) -IgnoreExitCode
+            } else {
+                Write-Host "Scoop is unavailable."
+            }
+        }
+        "mise" {
+            if (Test-Command "mise") {
+                Invoke-Native "mise" @("registry", [string]$package.id) -IgnoreExitCode
+            } else {
+                Write-Host "mise is unavailable."
+            }
+        }
+        "vendor" {
+            Write-Host "This package is managed by its vendor installer."
+        }
+    }
+}
+
+function Open-PackageStore {
+    param($Definition)
+    if (-not (Test-Command "fzf")) {
+        throw "The interactive store requires fzf. Install it with 'win add fzf', then try again."
+    }
+
+    $packages = @($Definition.packages | Where-Object {
+        $Manager -in @("all", "managed") -or $_.owner -eq $Manager
+    } | Sort-Object displayName)
+    if ($packages.Count -eq 0) {
+        Write-Host "No managed packages match manager '$Manager'." -ForegroundColor Yellow
+        return
+    }
+
+    $rows = @($packages | ForEach-Object {
+        @(
+            [string]$_.key,
+            [string]$_.displayName,
+            [string]$_.owner,
+            [string]$_.id,
+            (@($_.profiles) -join ",")
+        ) -join "`t"
+    })
+
+    $previewCommand = "pwsh -NoLogo -NoProfile -File `"$PSCommandPath`" info {1}"
+    $fzfArguments = @(
+        "--multi",
+        "--delimiter", "`t",
+        "--with-nth", "2,3,4,5",
+        "--header", "Tab: select | Enter: install | Alt-P: preview | Esc: cancel",
+        "--preview", $previewCommand,
+        "--preview-label", "Alt-P: details | Alt-J/K: scroll",
+        "--preview-window", "down:60%:wrap",
+        "--bind", "alt-p:toggle-preview,alt-d:preview-half-page-down,alt-u:preview-half-page-up,alt-k:preview-up,alt-j:preview-down",
+        "--color", "pointer:green,marker:green,prompt:cyan",
+        "--border", "rounded",
+        "--height", "95%",
+        "--layout", "reverse",
+        "--prompt", "Winenv Store > "
+    )
+
+    $selectedRows = @($rows | & fzf @fzfArguments)
+    $fzfExitCode = $LASTEXITCODE
+    if ($fzfExitCode -in @(1, 130) -or $selectedRows.Count -eq 0) {
+        Write-Host "No packages selected."
+        return
+    }
+    if ($null -ne $fzfExitCode -and $fzfExitCode -ne 0) {
+        throw "fzf failed with exit code $fzfExitCode"
+    }
+
+    $selectedKeys = @($selectedRows | ForEach-Object { ([string]$_ -split "`t", 2)[0] } | Select-Object -Unique)
+    $selectedPackages = @($packages | Where-Object { $selectedKeys -contains $_.key })
+
+    Write-Step "Installing selected packages"
+    $selectedPackages |
+        Select-Object key, displayName, owner, id |
+        Format-Table -AutoSize
+    Install-Packages $Definition $selectedPackages
+    Invoke-Migrations
+    Write-Host "`nSelected packages installed." -ForegroundColor Green
 }
 
 function Assert-ProfileDefinition {
@@ -408,9 +532,12 @@ function Install-MisePackage {
     Invoke-Native "mise" @("use", "--global", "$($Package.id)@$version")
 }
 
-function Install-SelectedPackages {
-    param($Definition)
-    $packages = Get-PackagesToInstall $Definition
+function Install-Packages {
+    param(
+        $Definition,
+        [array]$Packages
+    )
+    $packages = @($Packages)
     $owners = @($packages | ForEach-Object { $_.owner } | Sort-Object -Unique)
 
     Ensure-WinGet
@@ -439,6 +566,11 @@ function Install-SelectedPackages {
     }
 
     Enable-WinenvInPowerShell
+}
+
+function Install-SelectedPackages {
+    param($Definition)
+    Install-Packages $Definition @(Get-PackagesToInstall $Definition)
 }
 
 function Read-State {
@@ -626,7 +758,9 @@ Assert-ProfileDefinition $definition
 
 switch ($Action) {
     "list" { Show-Profile $definition }
+    "store" { Open-PackageStore $definition }
     "search" { Search-PackageCatalogs $definition }
+    "info" { Show-PackageInfo $definition }
     "doctor" { Test-ProfileHealth $definition }
     "install" {
         Install-SelectedPackages $definition
