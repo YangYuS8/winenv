@@ -1,3 +1,10 @@
+# [0.12.0](https://github.com/YangYuS8/winenv/compare/v0.11.0...v0.12.0) (2026-09-03)
+
+
+### Features
+
+* adopt existing Windows environments ([1333122](https://github.com/YangYuS8/winenv/commit/1333122875cd64252c3d3b87677ade9250f2abac))
+
 # [0.11.0](https://github.com/YangYuS8/winenv/compare/v0.10.0...v0.11.0) (2026-09-03)
 
 
