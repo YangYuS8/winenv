@@ -1,3 +1,10 @@
+# [0.10.0](https://github.com/YangYuS8/winenv/compare/v0.9.0...v0.10.0) (2026-09-03)
+
+
+### Features
+
+* support Scoop sources and manifests ([6754f6a](https://github.com/YangYuS8/winenv/commit/6754f6a49f6a68268afc930ba5abe7be99b32fe7))
+
 # [0.9.0](https://github.com/YangYuS8/winenv/compare/v0.8.0...v0.9.0) (2026-09-03)
 
 
