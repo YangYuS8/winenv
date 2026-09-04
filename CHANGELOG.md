@@ -1,3 +1,10 @@
+## [0.16.1](https://github.com/YangYuS8/winenv/compare/v0.16.0...v0.16.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* guide users to configure proxies manually after failures ([28adf76](https://github.com/YangYuS8/winenv/commit/28adf76cf2cbaeacc5645cc3c9f4992c10cd76ba))
+
 # [0.16.0](https://github.com/YangYuS8/winenv/compare/v0.15.0...v0.16.0) (2026-09-04)
 
 
