@@ -24,6 +24,8 @@ Root policy files remain canonical. Site policy pages summarize and link to them
 
 Use `/winenv/.../` for site links and `/winenv/zh/.../` for Chinese links. Preserve published headings and routes, or add a deliberate compatibility alias. `scripts/docs-legacy-routes.json` records the pre-migration public routes and anchors; do not erase entries to make a failed check pass.
 
+For Chinese bold labels immediately followed by prose, keep punctuation outside the markers: write `**Scoop**：运行`, not `**Scoop：**运行`. Check that the rendered list contains actual bold elements, not visible asterisks. Literal Markdown examples belong in inline code or fenced code blocks.
+
 ## Local checks
 
 After the [development setup](https://github.com/YangYuS8/winenv/blob/main/CONTRIBUTING.md#development-setup):
@@ -34,7 +36,7 @@ pnpm test:docs
 pnpm docs:build
 ```
 
-The build checks page metadata, JSON examples, translation pairs, local HTML links/assets, and fragments. It does not execute installer examples or guarantee that external websites are available. English edits require a corresponding Chinese change in the same diff; review the translation and make the matching change rather than updating a meaningless timestamp. Semantic accuracy still needs human review.
+The build checks page metadata, JSON examples, translation pairs, local HTML links/assets, and fragments. It also rejects paired `**` markers left in rendered prose, excluding code examples. It does not execute installer examples, detect every formatting error, or guarantee that external websites are available. English edits require a corresponding Chinese change in the same diff; review the translation and make the matching change rather than updating a meaningless timestamp. Semantic accuracy still needs human review.
 
 For interface changes, run `pnpm exec playwright install chromium` followed by `pnpm docs:test`. This uses a production preview because Pagefind search is built for production, not the development server. Tests cover language detection and persistence, deep links, search, mobile navigation, and an automated accessibility smoke check. Automated checks are not a complete accessibility certification.
 

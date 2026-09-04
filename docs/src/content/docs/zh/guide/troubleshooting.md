@@ -37,10 +37,10 @@ $PROFILE
 
 Winenv 不管理代理、不切换镜像，也不会换条线路自动重试。只对出问题的工具，按其当前帮助和官方说明自行配置：
 
-- **WinGet：**参考 [Microsoft 设置文档](https://learn.microsoft.com/en-us/windows/package-manager/winget/settings)。可用代理选项取决于安装版本和管理员策略。
-- **Scoop：**运行 `scoop help config`，查看[代理设置说明](https://github.com/ScoopInstaller/Scoop/blob/master/libexec/scoop-config.ps1)。Scoop 默认使用 Internet 选项；Git 等下载辅助工具可能需要单独检查。
-- **mise：**按照 [HTTP 代理 FAQ](https://mise.jdx.dev/faq.html#how-do-i-use-mise-with-http-proxies) 配置 `http_proxy` / `https_proxy`；插件的行为可能不同。
-- **Winenv 安装脚本或共享文件下载：**使用的是 PowerShell，不是包管理器。查看对应 PowerShell 版本的 [Invoke-WebRequest](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest) 和 `Invoke-RestMethod` 帮助。最开始的 `irm ... | iex` 下载失败时，Winenv 尚未启动，无法显示自己的提示。
+- **WinGet**：参考 [Microsoft 设置文档](https://learn.microsoft.com/en-us/windows/package-manager/winget/settings)。可用代理选项取决于安装版本和管理员策略。
+- **Scoop**：运行 `scoop help config`，查看[代理设置说明](https://github.com/ScoopInstaller/Scoop/blob/master/libexec/scoop-config.ps1)。Scoop 默认使用 Internet 选项；Git 等下载辅助工具可能需要单独检查。
+- **mise**：按照 [HTTP 代理 FAQ](https://mise.jdx.dev/faq.html#how-do-i-use-mise-with-http-proxies) 配置 `http_proxy` / `https_proxy`；插件的行为可能不同。
+- **Winenv 安装脚本或共享文件下载**：使用的是 PowerShell，不是包管理器。查看对应 PowerShell 版本的 [Invoke-WebRequest](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest) 和 `Invoke-RestMethod` 帮助。最开始的 `irm ... | iex` 下载失败时，Winenv 尚未启动，无法显示自己的提示。
 
 使用 FlClash 或 Clash Verge 时，先确认客户端正在运行，手动填写的地址和端口与客户端一致。“系统代理”只影响遵循该设置的程序；TUN 在网络层路由流量。关闭工具自己的显式代理不等于绕过 TUN。这些选择仍由代理客户端管理，参见 [Clash Verge 指引](https://www.clashverge.dev/guide/quickstart.html)。
 
