@@ -13,41 +13,84 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
+
+env:
+  ASTRO_TELEMETRY_DISABLED: 1
 
 jobs:
   build:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Check out the latest main branch
+      - name: Read the successful Release source record
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: docs-source
+          path: ${{ runner.temp }}/docs-source
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Resolve an immutable source revision
+        id: source
+        env:
+          DOCS_SOURCE_FILE: ${{ runner.temp }}/docs-source/docs-source.json
+          TRIGGER_SHA: ${{ github.event.workflow_run.head_sha }}
+          TRIGGER_RUN: ${{ github.event.workflow_run.id }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          let sha = process.env.GITHUB_SHA;
+          if (process.env.GITHUB_EVENT_NAME === 'workflow_run') {
+            const source = JSON.parse(readFileSync(process.env.DOCS_SOURCE_FILE, 'utf8'));
+            if (source.triggerSha !== process.env.TRIGGER_SHA || source.runId !== process.env.TRIGGER_RUN) {
+              throw new Error('The source record does not belong to this successful Release run.');
+            }
+            sha = source.sourceSha;
+          }
+          if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Invalid source SHA.');
+          appendFileSync(process.env.GITHUB_OUTPUT, `sha=${sha}\n`);
+          NODE
+
+      - name: Check out the recorded source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 0
 
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.10.0
-          cache: npm
+      - uses: ./.github/actions/setup-toolchain
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Verify dependency signatures
-        run: npm audit signatures
+      - name: Test documentation checks
+        run: pnpm test:docs
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
       - name: Build documentation
-        run: npm run docs:build
+        run: pnpm docs:build
+
+      - name: Install the browser for site checks
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Test the production site
+        run: pnpm docs:test
+
+      - name: Preserve browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docs-browser-failures
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: docs/.vitepress/dist
+          path: docs/dist
 
   deploy:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'

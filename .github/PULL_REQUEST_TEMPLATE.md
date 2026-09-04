@@ -6,9 +6,11 @@
 
 <!-- List exact commands and relevant manual checks. / 列出实际执行的命令和人工检查。 -->
 
-- [ ] `pwsh -NoProfile -File ./scripts/test.ps1`
-- [ ] `powershell.exe -NoProfile -File ./scripts/test-windows-powershell.ps1`
-- [ ] `npm run docs:build`
+- [ ] Runtime changes: `pwsh -NoProfile -File ./scripts/test.ps1` / 运行时修改。
+- [ ] Runtime changes: `powershell.exe -NoProfile -File ./scripts/test-windows-powershell.ps1` / 运行时修改。
+- [ ] `pnpm test:docs`
+- [ ] `pnpm docs:build`
+- [ ] UI changes: `pnpm docs:test` / 界面修改。
 
 ## Checklist / 检查表
 

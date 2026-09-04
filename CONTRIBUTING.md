@@ -34,23 +34,41 @@ Provider changes must preserve the validated registry contract. A new provider r
 
 ## Development setup
 
-Use Windows 11 with PowerShell 7 and Node.js 20 or newer. Fork the repository, create a focused branch, then install documentation and release dependencies:
+Documentation-only contributions work on Windows, macOS, and Linux. Use the Node.js version recorded in `.node-version` (or a compatible newer version) and the pnpm version pinned in `package.json`. These are contributor tools, not Winenv runtime prerequisites. Fork the repository and create a focused branch:
 
 ```powershell
 git clone https://github.com/<your-account>/winenv.git
 cd winenv
-npm ci
+npm install --global pnpm@11.25.0
+pnpm install --frozen-lockfile
+pnpm docs:dev
 ```
 
-Run the full local checks before opening a pull request:
+Before opening a documentation pull request, run:
+
+```sh
+pnpm test:docs
+pnpm docs:build
+```
+
+For navigation, styling, or language-switching changes, also run the browser checks:
+
+```sh
+pnpm exec playwright install chromium
+pnpm docs:test
+```
+
+PowerShell behavior changes additionally need Windows 11 and PowerShell 7:
 
 ```powershell
 pwsh -NoProfile -File ./scripts/test.ps1
 powershell.exe -NoProfile -File ./scripts/test-windows-powershell.ps1
-npm run docs:build
+pnpm docs:build
 ```
 
-CI repeats these checks on Windows. A production documentation build is required even for prose changes because it validates links, frontmatter, and locale configuration.
+CI runs documentation and browser checks on Linux, and runtime checks on Windows when relevant files change. A documentation build validates metadata, JSON examples, locale pairs, local links, assets, and published URL/anchor compatibility. Translation-change checks remind contributors to review the Chinese counterpart; they cannot judge translation accuracy. Pure translation corrections do not require rewriting English.
+
+Keep policy text canonical in the root files. Site community pages are introductions with links, not independently maintained copies of the full policies. The [documentation maintenance guide](https://yangyus8.top/winenv/community/documentation/) explains content structure and checks.
 
 ## Make a focused change
 
@@ -70,7 +88,7 @@ For user-facing changes:
 
 1. write the English source message or page first;
 2. update `locales/zh-CN.json` for CLI output;
-3. update the matching page under `docs/zh/`;
+3. update the matching page under `docs/src/content/docs/zh/`;
 4. preserve command names, parameters, package IDs, paths, and code samples unless localization genuinely requires a change;
 5. run localization and documentation checks.
 

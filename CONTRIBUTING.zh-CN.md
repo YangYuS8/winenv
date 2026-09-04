@@ -34,23 +34,41 @@ Provider 修改必须维持经过校验的注册表契约。新增 Provider 前�
 
 ## 开发环境
 
-建议使用 Windows 11、PowerShell 7 和 Node.js 20 或更高版本。Fork 仓库并创建聚焦的分支，然后安装依赖：
+纯文档贡献支持 Windows、macOS 和 Linux。使用 `.node-version` 记录的 Node.js 版本（或兼容的新版本），以及 `package.json` 固定的 pnpm 版本。这些是贡献者工具，不是 Winenv 用户的运行前置。Fork 仓库并创建聚焦的分支：
 
 ```powershell
 git clone https://github.com/<你的账号>/winenv.git
 cd winenv
-npm ci
+npm install --global pnpm@11.25.0
+pnpm install --frozen-lockfile
+pnpm docs:dev
 ```
 
-提交 Pull Request 前运行完整检查：
+提交文档 Pull Request 前运行：
+
+```sh
+pnpm test:docs
+pnpm docs:build
+```
+
+修改导航、样式或语言切换时，再执行浏览器检查：
+
+```sh
+pnpm exec playwright install chromium
+pnpm docs:test
+```
+
+修改 PowerShell 行为时，还需要 Windows 11 和 PowerShell 7：
 
 ```powershell
 pwsh -NoProfile -File ./scripts/test.ps1
 powershell.exe -NoProfile -File ./scripts/test-windows-powershell.ps1
-npm run docs:build
+pnpm docs:build
 ```
 
-CI 会在 Windows 上重复这些检查。即使只改文字，也要执行生产文档构建，以校验链接、frontmatter 和语言配置。
+CI 在 Linux 上执行文档和浏览器检查，在相关文件变化时执行 Windows 运行时检查。文档构建验证元数据、JSON 示例、语言配对、站内链接、资源以及已发布网址和锚点的兼容性。翻译变更检查提醒贡献者复核中文对应页，但不能判断译文准确性。单独修正译文不要求重写英文。
+
+根目录规范文件保留权威正文，文档站社区页面只做导读并链接过去，不单独维护完整副本。[文档维护指南](https://yangyus8.top/winenv/zh/community/documentation/)说明内容结构和质量检查。
 
 ## 保持修改聚焦
 
@@ -70,7 +88,7 @@ CI 会在 Windows 上重复这些检查。即使只改文字，也要执行生�
 
 1. 先完成英文源码消息或页面；
 2. CLI 输出同步更新 `locales/zh-CN.json`；
-3. 同步更新 `docs/zh/` 下对应页面；
+3. 同步更新 `docs/src/content/docs/zh/` 下对应页面；
 4. 命令、参数、包 ID、路径和代码示例通常保持原样；
 5. 运行国际化和文档检查。
 

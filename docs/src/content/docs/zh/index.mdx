@@ -1,0 +1,66 @@
+---
+title: Winenv
+description: "用一套短命令组织 WinGet、Scoop 与 mise。实时搜索、组合 Profile，也能无缝接入已经使用很久的电脑。"
+template: splash
+hero:
+  title: "把 Windows 软件管理变简单"
+  tagline: "用一套短命令组织 WinGet、Scoop 与 mise。实时搜索、组合 Profile，也能无缝接入已经使用很久的电脑。"
+  image:
+    file: ../../../../public/logo.png
+    alt: Winenv
+  actions:
+    - text: 开始使用
+      link: /winenv/zh/guide/getting-started/
+      variant: primary
+    - text: 命令速查
+      link: /winenv/zh/reference/commands/
+      variant: secondary
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="查询真实目录">
+    搜索时实时聚合 WinGet、Scoop 和 mise，同名来源全部展示，不维护容易过期的索引。
+  </Card>
+  <Card title="Profile 自由组合">
+    运行依赖、个人基线和社区配置彼此独立；重复声明会合并，真正冲突时才让你选择。
+  </Card>
+  <Card title="尊重现有系统">
+    扫描已经安装的软件，能复现的按需纳入，不能匹配的保持原样，不要求为了管理工具重装电脑。
+  </Card>
+  <Card title="日常命令够短">
+    用 win、win up、win rm、win check 完成常见操作，完整动作名仍兼容自动化脚本。
+  </Card>
+  <Card title="信任边界明确">
+    第三方源、裸安装器和本地 manifest 都先展示来源与校验信息，不静默提权或修改安全策略。
+  </Card>
+  <Card title="发布完全自动化">
+    提交记录自动生成版本、更新日志、校验过的 Release 资产和这座文档站。
+  </Card>
+</CardGrid>
+
+<span id="三个管理器-一套边界"></span>
+
+## 三个管理器，一套边界
+
+Winenv 借鉴的是 Omarchy 对工具职责的规划方式，而不是照搬 Linux 的软件栈：
+
+| 需求 | 默认交给 | 典型软件 |
+| --- | --- | --- |
+| Windows 安装器、服务、文件关联或系统集成 | WinGet | 浏览器、编辑器、桌面应用 |
+| 用户级、便携的命令行工具 | Scoop | 小型 CLI、单文件工具 |
+| 项目间需要切换版本的开发工具 | mise | Node.js、Go、Python |
+
+这只是默认判断顺序。最终选择始终来自当前软件目录和你的确认，而不是一张需要专人维护的映射表。
+
+```powershell
+# 打开终端里的软件选择器
+win
+
+# 带关键词打开，并明确选择来源
+win vscode
+win node -From mise
+```
+
+[了解软件搜索与归属方式 →](/winenv/zh/guide/packages/)

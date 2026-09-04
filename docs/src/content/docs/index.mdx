@@ -1,0 +1,64 @@
+---
+title: Winenv
+description: "One compact interface for WinGet, Scoop, and mise. Search live catalogs, compose profiles, and bring an existing PC under control without starting over."
+template: splash
+hero:
+  title: "Make Windows software manageable"
+  tagline: "One compact interface for WinGet, Scoop, and mise. Search live catalogs, compose profiles, and bring an existing PC under control without starting over."
+  image:
+    file: ../../../public/logo.png
+    alt: Winenv
+  actions:
+    - text: Get started
+      link: /winenv/guide/getting-started/
+      variant: primary
+    - text: Command reference
+      link: /winenv/reference/commands/
+      variant: secondary
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="Search real catalogs">
+    Query WinGet, Scoop, and mise at runtime. Every matching source stays visible, with no hand-maintained package index to become stale.
+  </Card>
+  <Card title="Compose profiles">
+    Runtime requirements, personal baselines, and community profiles remain independent. Identical claims merge; real conflicts ask for a decision.
+  </Card>
+  <Card title="Respect the current PC">
+    Scan software already installed, adopt only reproducible entries, and leave unknown local applications untouched. Reinstallation is never a prerequisite.
+  </Card>
+  <Card title="Keep daily commands short">
+    Use win, win up, win rm, and win check for common work. Long action names remain available for existing automation.
+  </Card>
+  <Card title="Make trust boundaries visible">
+    Third-party sources, raw installers, and local manifests show their origin and verification data before anything runs.
+  </Card>
+  <Card title="Automate the maintenance work">
+    Commit history produces versions, release notes, verified assets, and this documentation site through GitHub Actions.
+  </Card>
+</CardGrid>
+
+## Three managers, one clear policy
+
+Winenv borrows Omarchy's idea of assigning each tool a clear responsibility without copying a Linux software stack onto Windows:
+
+| Need | Default manager | Typical software |
+| --- | --- | --- |
+| Installer, service, file association, or Windows integration | WinGet | Browsers, editors, desktop apps |
+| Portable, user-scoped command-line tool | Scoop | Small CLIs and single-file tools |
+| Development runtime that must switch versions between projects | mise | Node.js, Go, Python |
+
+This is a decision order, not a hard-coded catalog. The final choice comes from the catalogs available on your machine and your confirmation.
+
+```powershell
+# Open the terminal software picker
+win
+
+# Start with a query or constrain the manager
+win vscode
+win node -From mise
+```
+
+[Learn how search and package ownership work →](/winenv/guide/packages/)

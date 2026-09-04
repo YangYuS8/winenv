@@ -14,6 +14,9 @@ permissions:
   issues: write
   pull-requests: write
 
+env:
+  ASTRO_TELEMETRY_DISABLED: 1
+
 jobs:
   release:
     runs-on: windows-latest
@@ -23,33 +26,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24.10.0
-          cache: npm
+      - uses: ./.github/actions/setup-toolchain
 
-      - name: Install release dependencies
-        run: npm ci
+      - name: Classify changes
+        id: changes
+        run: node scripts/classify-changes.mjs
 
-      - name: Verify dependency signatures
-        run: npm audit signatures
+      - name: Test documentation checks
+        run: pnpm test:docs
 
       - name: Build documentation
-        run: npm run docs:build
+        env:
+          DOCS_DIFF_BASE: ${{ steps.changes.outputs.base }}
+        run: pnpm docs:build
 
       - name: Test
+        if: steps.changes.outputs.runtime == 'true'
         shell: pwsh
         run: ./scripts/test.ps1
 
       - name: Test fresh-system Windows PowerShell compatibility
+        if: steps.changes.outputs.runtime == 'true'
         shell: powershell
         run: ./scripts/test-windows-powershell.ps1
 
       - name: Release from commit history
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run release
+        run: pnpm release
 
       - name: Detect a newly published release
         id: published
@@ -75,3 +79,14 @@ jobs:
         if: steps.published.outputs.value == 'true'
         shell: pwsh
         run: ./scripts/smoke-install.ps1
+
+      - name: Record the validated documentation revision
+        run: node scripts/record-docs-source.mjs
+
+      - name: Pass the exact source revision to Pages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docs-source
+          path: ${{ runner.temp }}/docs-source.json
+          if-no-files-found: error
+          retention-days: 7

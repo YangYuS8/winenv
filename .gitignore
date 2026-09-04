@@ -8,8 +8,11 @@ node_modules/
 .winenv/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
-docs/changelog.md
-docs/zh/changelog.md
+docs/.astro/
+docs/src/content/docs/changelog.md
+docs/src/content/docs/zh/changelog.md
+playwright-report/
+test-results/
 
 # Windows artifacts
 Thumbs.db

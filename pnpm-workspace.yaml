@@ -1,0 +1,11 @@
+# One package; this file also owns pnpm's dependency policy.
+minimumReleaseAge: 1440
+trustPolicy: no-downgrade
+# Astro's checker still uses this December 2024 release, published without
+# provenance. Keep the exception version-specific; registry signatures still apply.
+trustPolicyExclude:
+  - chokidar@4.0.3
+blockExoticSubdeps: true
+allowBuilds:
+  esbuild: true
+  sharp: true

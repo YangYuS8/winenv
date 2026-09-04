@@ -55,12 +55,14 @@ Contributions are welcome. Start with [CONTRIBUTING.md](./CONTRIBUTING.md), then
 
 ## Local documentation
 
+Follow the cross-platform [development setup](./CONTRIBUTING.md#development-setup) to install the pinned Node.js and pnpm toolchain.
+
 ```powershell
-npm ci
-npm run docs:dev
+pnpm install --frozen-lockfile
+pnpm docs:dev
 ```
 
-Documentation lives under `docs/`. The root `CHANGELOG.md` is the only release-history source; the site copies are generated during the build and must not be edited manually.
+Astro Starlight content lives under `docs/src/content/docs/`. The root `CHANGELOG.md` is the only release-history source; the site copies are generated during the build and must not be edited manually.
 
 ## License
 

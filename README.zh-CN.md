@@ -55,12 +55,14 @@ win help            # 查看简明帮助
 
 ## 本地维护文档
 
+先按跨平台[开发环境说明](./CONTRIBUTING.zh-CN.md#开发环境)准备固定版本的 Node.js 和 pnpm。
+
 ```powershell
-npm ci
-npm run docs:dev
+pnpm install --frozen-lockfile
+pnpm docs:dev
 ```
 
-文档位于 `docs/`。根目录 `CHANGELOG.md` 是发布历史的唯一来源；站点副本会在构建时生成，不要手工修改。
+Astro Starlight 的正文位于 `docs/src/content/docs/`。根目录 `CHANGELOG.md` 是发布历史的唯一来源；站点副本会在构建时生成，不要手工修改。
 
 ## 许可证
 

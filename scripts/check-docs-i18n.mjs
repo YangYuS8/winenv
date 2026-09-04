@@ -1,71 +1,38 @@
-import { access, readdir, readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
+import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { filesBelow, readPage, policyPairs, translationChanges } from './lib/docs.mjs';
 
-const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(scriptDirectory, "..");
-const docs = path.join(root, "docs");
-
-async function markdownFiles(directory) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files = [];
-  for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue;
-    const target = path.join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...await markdownFiles(target));
-    if (entry.isFile() && entry.name.endsWith(".md")) files.push(target);
-  }
-  return files;
-}
-
-const allPages = await markdownFiles(docs);
-const chineseRoot = path.join(docs, "zh") + path.sep;
-const englishPages = allPages.filter((file) => !file.startsWith(chineseRoot));
-const chinesePages = allPages.filter((file) => file.startsWith(chineseRoot));
-const missing = [];
-
-for (const english of englishPages) {
-  const relative = path.relative(docs, english);
-  const chinese = path.join(docs, "zh", relative);
-  try {
-    await access(chinese);
-  } catch {
-    missing.push(`Missing Simplified Chinese page for docs/${relative}`);
+const root = fileURLToPath(new URL('../', import.meta.url));
+const content = path.join(root, 'docs/src/content/docs');
+const pages = (await filesBelow(content)).filter((file) => /\.mdx?$/.test(file));
+const relative = (file) => path.relative(root, file).split(path.sep).join('/');
+const all = new Set(pages);
+const pairs = [];
+const errors = [];
+for (const file of pages) {
+  try { await readPage(file); } catch (error) { errors.push(error.message); }
+  const key = path.relative(content, file);
+  if (key.startsWith('zh' + path.sep)) {
+    if (!all.has(path.join(content, key.slice(3)))) errors.push('Orphaned translation: ' + relative(file));
+  } else {
+    const chinese = path.join(content, 'zh', key);
+    if (!all.has(chinese)) errors.push('Missing translation: ' + relative(chinese));
+    if (!key.endsWith('changelog.md')) pairs.push([relative(file), relative(chinese)]);
   }
 }
-
-for (const chinese of chinesePages) {
-  const relative = path.relative(chineseRoot, chinese);
-  const english = path.join(docs, relative);
-  try {
-    await access(english);
-  } catch {
-    missing.push(`Orphaned Simplified Chinese page: docs/zh/${relative}`);
+for (const pair of policyPairs) {
+  for (const file of pair) {
+    try { if (!(await readFile(path.join(root, file), 'utf8')).trim()) errors.push('Empty policy: ' + file); }
+    catch { errors.push('Missing policy: ' + file); }
   }
 }
-
-const policyPairs = [
-  ["README.md", "README.zh-CN.md"],
-  ["CONTRIBUTING.md", "CONTRIBUTING.zh-CN.md"],
-  ["CODE_OF_CONDUCT.md", "CODE_OF_CONDUCT.zh-CN.md"],
-  ["SECURITY.md", "SECURITY.zh-CN.md"],
-  ["SUPPORT.md", "SUPPORT.zh-CN.md"],
-  ["GOVERNANCE.md", "GOVERNANCE.zh-CN.md"],
-];
-
-for (const [english, chinese] of policyPairs) {
-  for (const file of [english, chinese]) {
-    try {
-      const content = await readFile(path.join(root, file), "utf8");
-      if (!content.trim()) missing.push(`Empty repository policy file: ${file}`);
-    } catch {
-      missing.push(`Missing repository policy file: ${file}`);
-    }
-  }
-}
-
-if (missing.length) {
-  throw new Error(`Internationalized documentation is incomplete:\n- ${missing.join("\n- ")}`);
-}
-
-console.log(`Validated ${englishPages.length} English pages, ${chinesePages.length} Chinese pages, and ${policyPairs.length} bilingual policy pairs.`);
+const base = process.env.DOCS_DIFF_BASE;
+if (base && !/^[a-f0-9]{40,64}$/.test(base)) throw new Error('DOCS_DIFF_BASE must be a full commit SHA.');
+const args = base ? ['diff', '--name-only', '--no-renames', base, 'HEAD'] : ['diff', '--name-only', '--no-renames', 'HEAD'];
+const changes = execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim().split('\n');
+if (!base) changes.push(...execFileSync('git', ['ls-files', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' }).trim().split('\n'));
+errors.push(...translationChanges(changes, [...pairs, ...policyPairs]));
+if (errors.length) throw new Error('Documentation checks failed:\n- ' + errors.join('\n- '));
+console.log('Validated ' + pages.length + ' bilingual pages, metadata, JSON examples, ' + policyPairs.length + ' policy pairs, and paired translation changes.');

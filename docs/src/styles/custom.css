@@ -1,0 +1,17 @@
+:root {
+  --sl-color-accent-low: #182c58;
+  --sl-color-accent: #759fff;
+  --sl-color-accent-high: #d4e2ff;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #e7efff;
+  --sl-color-accent: #2457d6;
+  --sl-color-accent-high: #153574;
+}
+
+.hero h1 {
+  background: linear-gradient(120deg, #356df3, #8b5cf6);
+  background-clip: text;
+  color: transparent;
+}
