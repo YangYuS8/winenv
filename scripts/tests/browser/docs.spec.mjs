@@ -88,6 +88,22 @@ for (const [locale, heading, labels] of [
   });
 }
 
+for (const [locale, heading] of [['', 'Network and proxy'], ['zh/', '网络与代理']]) {
+  test(`network hints link to manual guidance in ${locale || 'English'}`, async ({ page }) => {
+    await page.goto(`/winenv/${locale}guide/troubleshooting/#network-and-proxy`);
+    await expect(page.locator('#network-and-proxy')).toHaveCount(1);
+    const content = page.locator('.sl-markdown-content');
+    await expect(content.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+    for (const href of [
+      'https://learn.microsoft.com/en-us/windows/package-manager/winget/settings',
+      'https://github.com/ScoopInstaller/Scoop/blob/master/libexec/scoop-config.ps1',
+      'https://mise.jdx.dev/faq.html#how-do-i-use-mise-with-http-proxies',
+    ]) {
+      await expect(content.locator(`a[href="${href}"]`)).toBeVisible();
+    }
+  });
+}
+
 for (const locale of ['', 'zh/']) {
   for (const theme of ['light', 'dark']) {
     test(`accessibility smoke ${locale || 'en'} ${theme}`, async ({ page }, testInfo) => {

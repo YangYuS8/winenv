@@ -29,6 +29,21 @@ A shell started with `-NoProfile` does not load the integration installed in you
 
 If WinGet is absent, follow the [App Installer guidance](/winenv/guide/getting-started/#when-winget-is-unavailable). Scoop and mise have different responsibilities and are not replacements for a broken WinGet installation.
 
+## Network and proxy
+
+If downloads time out or connections fail, read the original error first. A failed command does not necessarily mean a proxy is needed: missing packages, permissions, rate limits, and verification failures have other causes. If your connection already works, leave it alone.
+
+Winenv does not manage proxies, switch mirrors, or retry through another route. Configure only the affected tool yourself, using its current help and official instructions:
+
+- **WinGet:** [Microsoft's settings reference](https://learn.microsoft.com/en-us/windows/package-manager/winget/settings). Available proxy options depend on the installed version and administrative policy.
+- **Scoop:** run `scoop help config` and check its [proxy setting](https://github.com/ScoopInstaller/Scoop/blob/master/libexec/scoop-config.ps1). Scoop uses Internet Options by default; Git and other download helpers may need separate attention.
+- **mise:** follow the [HTTP proxy FAQ](https://mise.jdx.dev/faq.html#how-do-i-use-mise-with-http-proxies) for `http_proxy` / `https_proxy`. Plugins may behave differently.
+- **Winenv bootstrap or shared-file downloads:** these use PowerShell, not a package manager. Check the help for your PowerShell version's [Invoke-WebRequest](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest) and `Invoke-RestMethod`. If the initial `irm ... | iex` download fails, Winenv has not started and cannot display its own hint.
+
+If you use FlClash or Clash Verge, first check that the client is running and its address/port matches any explicit settings. A system proxy only affects programs that honor it; TUN routes traffic at the network layer. Turning off a tool's explicit proxy does not bypass TUN. Manage those choices in your proxy client; see the [Clash Verge guide](https://www.clashverge.dev/guide/quickstart.html).
+
+Keep HTTPS, hash, and signature verification enabled. Remove proxy credentials and private URLs before sharing logs.
+
 ## A Profile cannot be resolved
 
 Inspect `win ls` and `win diff`. Identical claims merge, but incompatible versions or command providers require a choice. Automation flags do not resolve such conflicts. Refresh only the intended source with `win use <file-or-URL>`; disable an unwanted layer with `win off <name-or-id>`. Disabling does not uninstall its software.

@@ -81,6 +81,7 @@
     "            -Lang en|zh|auto、-Hash <sha256>、-Args <安装器参数>。"
   ],
   "exact": {
+    "If this is a network error, check connectivity and configure the affected tool's proxy yourself if needed. Winenv does not change proxy settings. Help: https://yangyus8.top/winenv/guide/troubleshooting/#network-and-proxy": "如果是网络问题，请检查连接，并按需自行配置出错工具的代理。Winenv 不会修改代理设置。帮助：https://yangyus8.top/winenv/zh/guide/troubleshooting/#network-and-proxy",
     "latest": "最新",
     "present": "存在",
     "unknown": "未知",

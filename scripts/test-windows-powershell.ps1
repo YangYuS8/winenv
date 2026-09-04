@@ -1,6 +1,8 @@
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
+& (Join-Path $PSScriptRoot "test-network-hints.ps1")
+
 Write-Host "Checking Windows PowerShell compatibility..."
 $runtimeFiles = @(
     Get-Item -LiteralPath (Join-Path $root "win.ps1")

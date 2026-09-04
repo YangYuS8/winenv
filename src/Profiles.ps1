@@ -36,9 +36,14 @@ function Read-UserProfileSource {
 
     if ($Source -match "^https://") {
         Write-Step "Downloading shared profile"
-        $response = Invoke-WebRequest -Uri $Source -UseBasicParsing -Headers @{
-            "Accept" = "application/json"
-            "User-Agent" = "winenv"
+        try {
+            $response = Invoke-WebRequest -Uri $Source -UseBasicParsing -Headers @{
+                "Accept" = "application/json"
+                "User-Agent" = "winenv"
+            }
+        } catch {
+            Write-NetworkHint
+            throw
         }
         $text = if ($response.Content -is [byte[]]) {
             [Text.Encoding]::UTF8.GetString($response.Content)

@@ -51,6 +51,7 @@ foreach ($file in $powershellFiles) {
 & (Join-Path $PSScriptRoot "test-i18n.ps1")
 & (Join-Path $PSScriptRoot "check-i18n-coverage.ps1")
 & (Join-Path $PSScriptRoot "test-architecture.ps1")
+& (Join-Path $PSScriptRoot "test-network-hints.ps1")
 
 Write-Host "Exercising command routes..."
 $testLocalAppData = Join-Path ([IO.Path]::GetTempPath()) ("winenv-tests-" + [Guid]::NewGuid().ToString("N"))

@@ -56,6 +56,7 @@ $InstallerMessages = @'
   "Incomplete": { "en-US": "Winenv {0} is incomplete. Re-run the installer.", "zh-CN": "Winenv {0} \u4e0d\u5b8c\u6574\u3002\u8bf7\u91cd\u65b0\u8fd0\u884c\u5b89\u88c5\u5668\u3002" },
   "MissingAssets": { "en-US": "Release {0} does not contain {1} and SHA256SUMS.", "zh-CN": "Release {0} \u4e0d\u5305\u542b {1} \u548c SHA256SUMS\u3002" },
   "Downloading": { "en-US": "Downloading Winenv {0}...", "zh-CN": "\u6b63\u5728\u4e0b\u8f7d Winenv {0}\u2026\u2026" },
+  "NetworkHelp": { "en-US": "If this is a network error, check connectivity and configure PowerShell's proxy yourself if needed. Winenv does not change proxy settings. Help: https://yangyus8.top/winenv/guide/troubleshooting/#network-and-proxy", "zh-CN": "\u5982\u679c\u662f\u7f51\u7edc\u95ee\u9898\uff0c\u8bf7\u68c0\u67e5\u8fde\u63a5\uff0c\u5e76\u6309\u9700\u81ea\u884c\u914d\u7f6e PowerShell \u7684\u4ee3\u7406\u3002Winenv \u4e0d\u4f1a\u4fee\u6539\u4ee3\u7406\u8bbe\u7f6e\u3002\u5e2e\u52a9\uff1ahttps://yangyus8.top/winenv/zh/guide/troubleshooting/#network-and-proxy" },
   "MissingChecksum": { "en-US": "No checksum was published for {0}.", "zh-CN": "\u6ca1\u6709\u4e3a {0} \u53d1\u5e03\u6821\u9a8c\u548c\u3002" },
   "ChecksumMismatch": { "en-US": "Checksum mismatch for {0}.", "zh-CN": "{0} \u7684\u6821\u9a8c\u548c\u4e0d\u5339\u914d\u3002" },
   "AlreadyDownloaded": { "en-US": "Winenv {0} is already downloaded.", "zh-CN": "Winenv {0} \u5df2\u4e0b\u8f7d\u3002" },
@@ -91,7 +92,12 @@ function Get-WinenvRelease {
         $tag = if ($Version.StartsWith("v")) { $Version } else { "v$Version" }
         $uri = "https://api.github.com/repos/$Repository/releases/tags/$tag"
     }
-    return Invoke-RestMethod -Uri $uri -Headers $ApiHeaders
+    try {
+        return Invoke-RestMethod -Uri $uri -Headers $ApiHeaders
+    } catch {
+        Write-InstallerHost (Get-InstallerText NetworkHelp) -ForegroundColor Yellow
+        throw
+    }
 }
 
 function Add-UserPathEntry {
@@ -174,8 +180,13 @@ $targetPath = Join-Path $VersionsRoot $resolvedVersion
 try {
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     Write-InstallerHost (Get-InstallerText Downloading -Arguments @($resolvedVersion)) -ForegroundColor Cyan
-    Invoke-WebRequest -Uri $zipAsset[0].browser_download_url -OutFile $zipPath -UseBasicParsing
-    Invoke-WebRequest -Uri $checksumAsset[0].browser_download_url -OutFile $checksumPath -UseBasicParsing
+    try {
+        Invoke-WebRequest -Uri $zipAsset[0].browser_download_url -OutFile $zipPath -UseBasicParsing
+        Invoke-WebRequest -Uri $checksumAsset[0].browser_download_url -OutFile $checksumPath -UseBasicParsing
+    } catch {
+        Write-InstallerHost (Get-InstallerText NetworkHelp) -ForegroundColor Yellow
+        throw
+    }
 
     $escapedName = [Regex]::Escape($zipName)
     $checksumText = Get-Content -Raw -Path $checksumPath

@@ -184,7 +184,12 @@ function Ensure-Scoop {
         }
     }
 
-    $installerText = Invoke-RestMethod -Uri $installerUri
+    try {
+        $installerText = Invoke-RestMethod -Uri $installerUri
+    } catch {
+        Write-NetworkHint
+        throw
+    }
     $bytes = [Text.Encoding]::UTF8.GetBytes([string]$installerText)
     $sha256 = [Security.Cryptography.SHA256]::Create()
     try {
@@ -409,9 +414,14 @@ function Install-ScoopManifest {
                 throw "A Scoop manifest URL must end in .json."
             }
             Write-Step "Downloading Scoop manifest"
-            $response = Invoke-WebRequest -Uri $Reference -UseBasicParsing -Headers @{
-                "Accept" = "application/json"
-                "User-Agent" = "winenv"
+            try {
+                $response = Invoke-WebRequest -Uri $Reference -UseBasicParsing -Headers @{
+                    "Accept" = "application/json"
+                    "User-Agent" = "winenv"
+                }
+            } catch {
+                Write-NetworkHint
+                throw
             }
             $finalUri = $null
             if ($null -ne $response.BaseResponse) {

@@ -25,8 +25,15 @@ function Invoke-Native {
     & $Command @Arguments
     $exitCode = $LASTEXITCODE
     if (-not $IgnoreExitCode -and $null -ne $exitCode -and $exitCode -ne 0) {
+        if ([IO.Path]::GetFileNameWithoutExtension($Command) -in @("winget", "scoop", "mise")) {
+            Write-NetworkHint
+        }
         throw "$Command failed with exit code $exitCode"
     }
+}
+
+function Write-NetworkHint {
+    Write-WinenvHost "If this is a network error, check connectivity and configure the affected tool's proxy yourself if needed. Winenv does not change proxy settings. Help: https://yangyus8.top/winenv/guide/troubleshooting/#network-and-proxy" -ForegroundColor Yellow
 }
 
 function Refresh-ProcessPath {
