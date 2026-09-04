@@ -30,7 +30,7 @@ export function parsePage(source, name) {
   return { metadata, body };
 }
 
-export const policyPairs = ['README', 'CONTRIBUTING', 'CODE_OF_CONDUCT', 'SECURITY', 'SUPPORT', 'GOVERNANCE']
+export const policyPairs = ['README', 'CONTRIBUTING', 'CODE_OF_CONDUCT', 'SECURITY', 'SUPPORT', 'GOVERNANCE', 'AGENTS']
   .map((name) => [`${name}.md`, `${name}.zh-CN.md`]);
 
 export function translationChanges(changed, pairs) {

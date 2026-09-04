@@ -4,6 +4,8 @@
 
 感谢你帮助 Winenv 把 Windows 软件管理做得更可预测。这份规范用于让小规模社区也能稳定评审、发布和维护贡献。
 
+编码助手还须遵守 [AGENTS.md](./AGENTS.md)（[中文对照](./AGENTS.zh-CN.md)）：实现前指出需求或设计的实质性冲突，并取得提问者的知情决定。
+
 ## 提交 Issue 前
 
 - 先搜索已有 Issue 和[中文文档](https://yangyus8.top/winenv/zh/)。

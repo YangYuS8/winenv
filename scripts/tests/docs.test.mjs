@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { parsePage, translationChanges } from '../lib/docs.mjs';
+import { parsePage, translationChanges, policyPairs } from '../lib/docs.mjs';
 import { auditSite, pageFacts, siteTarget } from '../check-docs-site.mjs';
 import { preferredEntry, localeForPath } from '../../docs/public/locale.js';
 import { needsRuntime } from '../classify-changes.mjs';
@@ -20,6 +20,13 @@ test('an English edit requires its translation in the same change', () => {
   assert.equal(translationChanges(['guide.md'], pairs).length, 1);
   assert.equal(translationChanges(['guide.md', 'zh/guide.md'], pairs).length, 0);
   assert.equal(translationChanges(['zh/guide.md'], pairs).length, 0);
+});
+
+test('agent instructions participate in bilingual policy checks', () => {
+  assert.ok(policyPairs.some(([english, chinese]) => english === 'AGENTS.md' && chinese === 'AGENTS.zh-CN.md'));
+  assert.equal(translationChanges(['AGENTS.md'], policyPairs).length, 1);
+  assert.equal(translationChanges(['AGENTS.md', 'AGENTS.zh-CN.md'], policyPairs).length, 0);
+  assert.equal(translationChanges(['AGENTS.zh-CN.md'], policyPairs).length, 0);
 });
 
 test('HTML checks use parsed attributes, including Unicode fragments', () => {

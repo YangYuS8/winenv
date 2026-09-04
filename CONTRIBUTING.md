@@ -4,6 +4,8 @@
 
 Thank you for helping make Windows software management more predictable. This guide keeps changes reviewable, secure, and maintainable by a small community.
 
+Coding agents must also follow [AGENTS.md](./AGENTS.md), including its requirement to raise material requirement or design conflicts before implementation and obtain an informed decision from the requester.
+
 ## Before opening an issue
 
 - Search existing issues and the [documentation](https://yangyus8.top/winenv/).
