@@ -26,6 +26,7 @@ irm https://raw.githubusercontent.com/YangYuS8/winenv/main/install.ps1 | iex
 ```powershell
 win                 # 打开交互式软件选择器
 win vscode          # 搜索并安装软件
+win diff            # 比较当前 Profile 声明与这台电脑
 win scan            # 只读扫描现有 Windows 软件
 win check           # 检查环境和冲突
 win help            # 查看简明帮助

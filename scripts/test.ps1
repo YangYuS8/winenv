@@ -242,6 +242,7 @@ function global:Read-Host {
 & (Join-Path $PSScriptRoot "test-requirements.ps1")
 & (Join-Path $PSScriptRoot "test-scoop-sources.ps1")
 & (Join-Path $PSScriptRoot "test-installers.ps1")
+& (Join-Path $PSScriptRoot "test-diff.ps1")
 
 $runtimeList = (& (Join-Path $root "win.ps1") list | Out-String -Width 4096)
 if ($runtimeList -notmatch "PowerShell 7" -or $runtimeList -notmatch "junegunn.fzf" -or $runtimeList -match "Node.js") {
@@ -257,7 +258,7 @@ if ($localizedRuntimeInstall -notmatch "运行要求" -or $localizedRuntimeInsta
 }
 & (Join-Path $root "win.ps1") use
 $helpText = (& (Join-Path $root "win.ps1") help 6>&1 | Out-String -Width 4096)
-if ($helpText -notmatch "win \[software\]" -or $helpText -notmatch "win off" -or $helpText -notmatch "win scan" -or $helpText -notmatch "win adopt" -or $helpText -notmatch "-From") {
+if ($helpText -notmatch "win \[software\]" -or $helpText -notmatch "win off" -or $helpText -notmatch "win diff" -or $helpText -notmatch "win scan" -or $helpText -notmatch "win adopt" -or $helpText -notmatch "-From") {
     throw "The compact help does not describe the primary command interface."
 }
 
@@ -304,6 +305,16 @@ $miseFragmentPath = Join-Path $env:MISE_CONFIG_DIR "conf.d\winenv.toml"
 $miseFragment = Get-Content -Raw -Path $miseFragmentPath
 if ($miseFragment -notmatch '"node"\s*=\s*"26"') {
     throw "Profile-managed mise tools were not written to Winenv's isolated config fragment."
+}
+
+$beforeDiffRegistry = Get-Content -Raw -Path $registryPath
+$beforeDiffMiseFragment = Get-Content -Raw -Path $miseFragmentPath
+$diffText = (& (Join-Path $root "win.ps1") diff node 6>&1 | Out-String -Width 4096)
+if ($diffText -notmatch "Profile difference" -or $diffText -notmatch "satisfied\s+mise\s+Node\.js\s+26\s+26\.8\.1") {
+    throw "The public diff route did not compare a selected effective declaration."
+}
+if ((Get-Content -Raw -Path $registryPath) -ne $beforeDiffRegistry -or (Get-Content -Raw -Path $miseFragmentPath) -ne $beforeDiffMiseFragment) {
+    throw "The public diff route changed profile or mise state."
 }
 
 $composedList = (& (Join-Path $root "win.ps1") list 6>&1 | Out-String -Width 4096)

@@ -76,7 +76,7 @@ $ActionAliases = @{
 $CanonicalActions = @(
     "help", "list", "use", "unuse", "profile", "store", "search", "info", "doctor",
     "install", "update", "remove", "cleanup", "migrate", "version", "self-update", "bucket",
-    "scan", "adopt", "language"
+    "scan", "adopt", "diff", "language"
 )
 
 $WinenvRoot = $PSScriptRoot
@@ -172,6 +172,7 @@ try {
 
     switch ($Action) {
         "list" { Show-Profile $definition }
+        "diff" { Show-WinenvProfileDiff $definition $Target }
         "scan" { Show-InstalledInventory $definition }
         "adopt" { Adopt-InstalledPackages $definition }
         "store" { Open-PackageStore $definition }

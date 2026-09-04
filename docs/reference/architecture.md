@@ -113,13 +113,12 @@ Team use should continue to start with reviewable profiles stored in Git. Enterp
 
 ## Next steps
 
-The modular split and initial provider registry are complete under this RFC. Future work should proceed in this order:
+The modular split, initial provider registry, and read-only `win diff` are complete under this RFC. Future work should proceed in this order:
 
-1. expose a read-only `win diff` using the existing effective-profile and inventory models;
-2. evaluate an optional lockfile that records resolved versions, sources, and hashes without replacing profile intent;
-3. design `win sync` so install and repair are safe by default and removal requires an explicit prune option;
-4. normalize more provider operations only after their behavior can be expressed honestly across managers;
-5. consider a public extension surface only after the internal contract has remained stable across multiple releases.
+1. evaluate an optional lockfile that records resolved versions, sources, and hashes without replacing profile intent;
+2. design `win sync` so install and repair are safe by default and removal requires an explicit prune option;
+3. normalize more provider operations only after their behavior can be expressed honestly across managers;
+4. consider a public extension surface only after the internal contract has remained stable across multiple releases.
 
 ## Consequences
 

@@ -35,6 +35,7 @@ if ($chineseList -notmatch "PowerShell 7" -or $chineseList -notmatch "junegunn.f
 }
 & (Join-Path $root "win.ps1") off -n | Out-Null
 & (Join-Path $root "win.ps1") find fzf -From managed | Out-Null
+& (Join-Path $root "win.ps1") diff fzf | Out-Null
 & (Join-Path $root "win.ps1") scan | Out-Null
 & (Join-Path $root "win.ps1") add powershell -n | Out-Null
 

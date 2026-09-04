@@ -41,6 +41,15 @@ win adopt -n             # 选择并预览，不写入
 
 Winenv 无法可靠猜测每个包提供的命令，因此自动生成项的 `commands` 会留空。准备长期分享时，可以复制这份 JSON，补充名称、分组与命令，再用 `win use <文件>` 导入正式 Profile。
 
+## 日后检查声明基线
+
+```powershell
+win diff
+win diff powertoys
+```
+
+`win diff` 会比较最终 Profile 与当前安装状态，全程不做修改。它会报告缺失软件、版本不兼容、来源不同、管理器不可用以及需要手工检查的声明。Profile 之外的软件不算偏差；查看整台电脑的完整清单仍使用 `win scan`。全部状态解释见[组合 Profile](./profiles#理解-win-diff)。
+
 ## 无法映射的软件
 
 `local` 项不会被强行写进“可复现”清单：

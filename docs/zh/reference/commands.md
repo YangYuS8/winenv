@@ -19,6 +19,7 @@
 | 命令 | 用途 |
 | --- | --- |
 | `win scan [软件]` | 只读扫描当前机器的软件 |
+| `win diff [软件]` | 比较最终 Profile 声明与实际安装状态，不修改任何一方 |
 | `win adopt [软件]` | 选择可复现软件，合并到本机 `adopted` Profile |
 | `win use <文件或 URL>` | 导入、刷新并安装一个独立 Profile |
 | `win use` | 列出已经登记的 Profile |

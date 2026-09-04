@@ -76,10 +76,31 @@ Local conflict decisions live in `%LOCALAPPDATA%\Winenv\config.json`; they are n
 ```powershell
 win use                 # list registered profiles
 win ls                  # show profiles, packages, and claims
+win diff                # compare effective declarations with this PC
+win diff node           # limit the comparison by package name, key, or ID
 win use shared-tools    # re-enable a retained local snapshot
 ```
 
 Only a file or HTTPS URL refreshes a snapshot. If names collide, use the ID shown by `win ls`.
+
+### Understand `win diff`
+
+`win diff` is always read-only. It does not install, update, remove, adopt, refresh, or rewrite a profile. `-n` and `-y` are therefore unnecessary. Use `-P` to compare selected groups temporarily, or `-From winget|scoop|mise` to limit the managers shown.
+
+The result compares only the effective declarations selected from the built-in runtime layer and active user profiles:
+
+| Status | Meaning |
+| --- | --- |
+| `satisfied` | The required runtime capability or exact package identity is present, and a declared version is compatible |
+| `missing` | The manager is available but the declared package is absent |
+| `version-drift` | The package is present at a version that does not satisfy the declaration |
+| `source-drift` | The package ID is present through the same manager but from another WinGet source or Scoop bucket |
+| `manager-unavailable` | The responsible manager is missing, broken, or could not provide an inventory |
+| `unverifiable` | Winenv found the declaration but cannot safely establish its state, such as a vendor-managed installer or unknown installed version |
+
+An unpinned package means “present”; `diff` does not query remote catalogs to decide whether it is the newest release. Extra software installed outside the active declarations is intentionally not drift and is never a reason to remove anything. Use `win scan` when you want to review that wider inventory.
+
+The command currently reports findings for a person to review and returns normally even when attention is needed. Automatic repair and pruning are deliberately outside this read-only boundary.
 
 ## Disabling and software ownership
 

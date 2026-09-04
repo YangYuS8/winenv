@@ -208,6 +208,7 @@ Winenv keeps Windows software simple.
   win use <file|url>   Add, refresh, and install a profile
   win off [profile]    Disable one profile without uninstalling
   win ls               Show profiles and effective packages
+  win diff [software]  Compare the effective profile with this PC
   win find <software>  Print search results without opening the picker
   win show <software>  Show package ownership and details
   win check            Check managers and command conflicts

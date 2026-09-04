@@ -39,6 +39,15 @@ Nothing is reinstalled, updated, or removed. Repeating the command merges new se
 
 Winenv cannot reliably infer every command exposed by an installed package, so generated entries leave `commands` empty. Before sharing a durable profile, copy the JSON, improve its name, groups, and command declarations, then import it with `win use <file>`.
 
+## Check the declared baseline later
+
+```powershell
+win diff
+win diff powertoys
+```
+
+`win diff` compares the effective profile with the current installed state and changes nothing. It reports missing packages, incompatible versions, different sources, unavailable managers, and declarations that need manual inspection. Software outside the profile is not considered drift; keep using `win scan` for the complete machine inventory. See [Composing profiles](./profiles#understand-win-diff) for the full status reference.
+
 ## Software that cannot be mapped
 
 `local` entries are not forced into a supposedly reproducible manifest:

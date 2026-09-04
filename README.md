@@ -26,6 +26,7 @@ Start here:
 ```powershell
 win                 # open the interactive software picker
 win vscode          # search for and install software
+win diff            # compare active profile declarations with this PC
 win scan            # inventory the current PC without changing it
 win check           # inspect managers and conflicts
 win help            # show compact help

@@ -163,6 +163,262 @@ function Resolve-ExistingPackagePlan {
     return @($remaining | ForEach-Object { $_ })
 }
 
+function Get-WinenvPackageLocation {
+    param($Package)
+    $owner = if ($Package.psobject.Properties.Name -contains "owner") { [string]$Package.owner } else { [string]$Package.Manager }
+    switch ($owner) {
+        "winget" {
+            $source = if ($Package.psobject.Properties.Name -contains "source") { [string]$Package.source } else { [string]$Package.Source }
+            if ($source) { return $source }
+            return "winget"
+        }
+        "scoop" {
+            $bucket = if ($Package.psobject.Properties.Name -contains "bucket") { [string]$Package.bucket } else { [string]$Package.Source }
+            if ($bucket) { return $bucket }
+            return "main"
+        }
+        "mise" { return "mise" }
+        default { return "vendor" }
+    }
+}
+
+function Test-WinenvPackageVersionSatisfied {
+    param(
+        $Package,
+        $Candidate
+    )
+    $requested = [string]$Package.version
+    if ([string]::IsNullOrWhiteSpace($requested)) { return $true }
+    if ([string]$Package.owner -eq "mise") { return Test-MiseVersionSatisfied $requested $Candidate }
+    return ([string]$Candidate.Version).Equals($requested, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-WinenvCandidateVersionKnown {
+    param($Candidate)
+    $version = ([string]$Candidate.Version).Trim()
+    return -not [string]::IsNullOrWhiteSpace($version) -and $version -notin @("unknown", "-", "n/a")
+}
+
+function Get-WinenvInstalledInventorySnapshot {
+    param([array]$Packages)
+
+    $candidates = New-Object System.Collections.Generic.List[object]
+    $providerStatus = @{}
+    $owners = @($Packages | Where-Object { -not [bool]$_._runtime -and $_.owner -in @("winget", "scoop", "mise") } | ForEach-Object owner | Sort-Object -Unique)
+    foreach ($owner in $owners) {
+        $probe = Get-ManagerProbe $owner
+        $providerStatus[$owner] = [string]$probe.Status
+        if ($probe.Status -ne "available") { continue }
+
+        try {
+            $inventory = switch ($owner) {
+                "winget" {
+                    $tableCandidates = @(Get-WinGetCandidates "" -Installed)
+                    $export = Get-WinGetExportInventory
+                    if ($export.Succeeded) { @($export.Candidates) } else { $tableCandidates }
+                }
+                "scoop" { @(Get-ScoopCandidates "" -Installed) }
+                "mise" { @(Get-MiseCandidates "" -Installed) }
+            }
+            foreach ($candidate in @($inventory)) {
+                if ($null -ne $candidate) { $candidates.Add($candidate) }
+            }
+        } catch {
+            $providerStatus[$owner] = "inventory-error"
+        }
+    }
+
+    return [pscustomobject]@{
+        Candidates = @($candidates | ForEach-Object { $_ })
+        ProviderStatus = $providerStatus
+    }
+}
+
+function Get-WinenvDesiredPackageText {
+    param($Package)
+    $version = if ([string]::IsNullOrWhiteSpace([string]$Package.version)) { "present" } else { [string]$Package.version }
+    if ([string]$Package.owner -in @("winget", "scoop")) {
+        return "$(Get-WinenvPackageLocation $Package) @ $version"
+    }
+    return $version
+}
+
+function Get-WinenvActualPackageText {
+    param(
+        $Package,
+        $Candidate
+    )
+    $version = if (Test-WinenvCandidateVersionKnown $Candidate) { [string]$Candidate.Version } else { "unknown" }
+    if ([string]$Package.owner -in @("winget", "scoop")) {
+        return "$(Get-WinenvPackageLocation $Candidate) @ $version"
+    }
+    return $version
+}
+
+function Compare-WinenvPackageState {
+    param(
+        [array]$Packages,
+        $Snapshot
+    )
+
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($package in @($Packages | Sort-Object owner, displayName, id)) {
+        $requirement = Get-RuntimeRequirement $package
+        if ($null -ne $requirement) {
+            $probe = Get-RuntimeRequirementProbe $package
+            $status = switch ([string]$probe.Status) {
+                "available" { "satisfied" }
+                "missing" { "missing" }
+                "outdated" { "version-drift" }
+                default { "unverifiable" }
+            }
+            $rows.Add([pscustomobject]@{
+                Status = $status
+                Manager = [string]$package.owner
+                Name = [string]$probe.Name
+                Desired = ">= $($probe.MinimumVersion)"
+                Actual = if ($null -ne $probe.Version) { [string]$probe.Version } elseif ($probe.Status -eq "missing") { "-" } else { [string]$probe.Status }
+            })
+            continue
+        }
+
+        if ([string]$package.owner -eq "vendor") {
+            $rows.Add([pscustomobject]@{
+                Status = "unverifiable"
+                Manager = "vendor"
+                Name = [string]$package.displayName
+                Desired = "present"
+                Actual = "manual inspection"
+            })
+            continue
+        }
+
+        $providerStatus = if ($Snapshot.ProviderStatus.ContainsKey([string]$package.owner)) { [string]$Snapshot.ProviderStatus[[string]$package.owner] } else { "missing" }
+        if ($providerStatus -ne "available") {
+            $rows.Add([pscustomobject]@{
+                Status = "manager-unavailable"
+                Manager = [string]$package.owner
+                Name = [string]$package.displayName
+                Desired = Get-WinenvDesiredPackageText $package
+                Actual = $providerStatus
+            })
+            continue
+        }
+
+        $desiredIdentity = Get-PackageIdentity $package
+        $exact = @($Snapshot.Candidates | Where-Object {
+            $_.Manager -eq $package.owner -and (Get-PackageIdentity (ConvertTo-PackageDefinition $_)) -eq $desiredIdentity
+        } | Select-Object -First 1)
+        if ($exact.Count -gt 0) {
+            $candidate = $exact[0]
+            $hasRequestedVersion = -not [string]::IsNullOrWhiteSpace([string]$package.version)
+            $status = if (Test-WinenvPackageVersionSatisfied $package $candidate) {
+                "satisfied"
+            } elseif ($hasRequestedVersion -and -not (Test-WinenvCandidateVersionKnown $candidate)) {
+                "unverifiable"
+            } else {
+                "version-drift"
+            }
+            $rows.Add([pscustomobject]@{
+                Status = $status
+                Manager = [string]$package.owner
+                Name = [string]$package.displayName
+                Desired = Get-WinenvDesiredPackageText $package
+                Actual = Get-WinenvActualPackageText $package $candidate
+            })
+            continue
+        }
+
+        $differentSource = @($Snapshot.Candidates | Where-Object {
+            $_.Manager -eq $package.owner -and ([string]$_.Id).Equals([string]$package.id, [StringComparison]::OrdinalIgnoreCase)
+        } | Select-Object -First 1)
+        if ($differentSource.Count -gt 0) {
+            $rows.Add([pscustomobject]@{
+                Status = "source-drift"
+                Manager = [string]$package.owner
+                Name = [string]$package.displayName
+                Desired = Get-WinenvDesiredPackageText $package
+                Actual = Get-WinenvActualPackageText $package $differentSource[0]
+            })
+            continue
+        }
+
+        $rows.Add([pscustomobject]@{
+            Status = "missing"
+            Manager = [string]$package.owner
+            Name = [string]$package.displayName
+            Desired = Get-WinenvDesiredPackageText $package
+            Actual = "-"
+        })
+    }
+    return @($rows | ForEach-Object { $_ })
+}
+
+function Get-WinenvProfileDiff {
+    param(
+        $Definition,
+        [string]$Query = ""
+    )
+    $packages = @(Get-SelectedPackages $Definition | Where-Object {
+        ($Manager -in @("all", "managed") -or $_.owner -eq $Manager) -and
+        ([string]::IsNullOrWhiteSpace($Query) -or (Test-PackageMatch $_ $Query))
+    })
+    if ($packages.Count -eq 0) { return @() }
+    $snapshot = Get-WinenvInstalledInventorySnapshot $packages
+    return @(Compare-WinenvPackageState $packages $snapshot)
+}
+
+function ConvertTo-WinenvLocalizedDiffValue {
+    param([string]$Value)
+    $parts = @($Value -split " @ ", 2)
+    if ($parts.Count -eq 2) {
+        $detail = Get-WinenvLocalizedDisplayValue "status" $parts[1]
+        $detail = ConvertTo-WinenvLocalizedText ([string]$detail)
+        return "$($parts[0]) @ $detail"
+    }
+    $localized = Get-WinenvLocalizedDisplayValue "status" $Value
+    return ConvertTo-WinenvLocalizedText ([string]$localized)
+}
+
+function Show-WinenvProfileDiff {
+    param(
+        $Definition,
+        [string]$Query = ""
+    )
+    $rows = @(Get-WinenvProfileDiff $Definition $Query)
+    if ($rows.Count -eq 0) {
+        if ([string]::IsNullOrWhiteSpace($Query)) {
+            Write-WinenvHost "No profile declarations are selected."
+        } else {
+            Write-WinenvHost "No profile declarations matched '$Query'."
+        }
+        return
+    }
+
+    Write-Step "Profile difference"
+    $displayRows = @($rows | ForEach-Object {
+        [pscustomobject]@{
+            status = $_.Status
+            manager = $_.Manager
+            name = $_.Name
+            desired = ConvertTo-WinenvLocalizedDiffValue ([string]$_.Desired)
+            actual = ConvertTo-WinenvLocalizedDiffValue ([string]$_.Actual)
+        }
+    })
+    $displayRows | Format-WinenvTable -Property status, manager, name, desired, actual -AutoSize
+
+    $satisfied = @($rows | Where-Object Status -eq "satisfied").Count
+    $unverifiable = @($rows | Where-Object Status -eq "unverifiable").Count
+    $attention = $rows.Count - $satisfied - $unverifiable
+    Write-WinenvHost "Satisfied: $satisfied | Attention: $attention | Unverifiable: $unverifiable"
+    if ($attention -eq 0) {
+        Write-WinenvHost "All automatically verifiable profile declarations are satisfied." -ForegroundColor Green
+    } else {
+        Write-WinenvHost "Review missing, drifted, or unavailable declarations above." -ForegroundColor Yellow
+    }
+    Write-WinenvHost "Extra installed software is not treated as drift. Run 'win scan' to review it." -ForegroundColor DarkGray
+}
+
 function Install-Packages {
     param(
         $Definition,

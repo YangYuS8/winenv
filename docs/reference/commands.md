@@ -19,6 +19,7 @@ For daily work, remember `win`. Long action names remain compatible with older s
 | Command | Purpose |
 | --- | --- |
 | `win scan [software]` | Read-only inventory of the current machine |
+| `win diff [software]` | Compare effective profile declarations with installed state, without changing either |
 | `win adopt [software]` | Add selected reproducible software to the local `adopted` profile |
 | `win use <file-or-URL>` | Import, refresh, and install an independent profile |
 | `win use` | List registered profiles |

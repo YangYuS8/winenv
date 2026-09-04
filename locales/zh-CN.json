@@ -21,7 +21,9 @@
     "provider": "提供方",
     "claims": "声明方",
     "hash": "哈希",
-    "size": "大小"
+    "size": "大小",
+    "desired": "期望",
+    "actual": "实际"
   },
   "displayValues": {
     "on": "启用",
@@ -38,7 +40,12 @@
     "conflict": "冲突",
     "resolve": "处理",
     "manual": "手工",
-    "ready": "就绪"
+    "ready": "就绪",
+    "satisfied": "已满足",
+    "version-drift": "版本偏差",
+    "source-drift": "来源偏差",
+    "manager-unavailable": "管理器不可用",
+    "unverifiable": "无法验证"
   },
   "help": [
     "Winenv 让 Windows 软件管理保持简单。",
@@ -60,6 +67,7 @@
     "  win use <文件|URL>  添加、刷新并安装一个 Profile",
     "  win off [Profile]   停用 Profile，但不卸载软件",
     "  win ls              显示 Profile 和最终有效软件",
+    "  win diff [软件]      比较最终 Profile 与当前电脑",
     "  win find <软件>     只打印搜索结果，不打开选择器",
     "  win show <软件>     显示软件归属和详情",
     "  win check           检查管理器和命令冲突",
@@ -74,6 +82,10 @@
   ],
   "exact": {
     "latest": "最新",
+    "present": "存在",
+    "unknown": "未知",
+    "manual inspection": "手工检查",
+    "inventory-error": "清单读取失败",
     "path or fallback": "路径或后备来源",
     "Manager | Source | Name | ID | Version | Baseline   (Alt-P: details, Esc: cancel)": "管理器 | 来源 | 名称 | ID | 版本 | 基线   (Alt-P：详情，Esc：取消)",
     "Alt-P: details | Alt-J/K: scroll": "Alt-P：详情 | Alt-J/K：滚动",
@@ -96,6 +108,8 @@
     { "pattern": "^Language would be set to (.+); current preview language is (.+)\\.$", "replacement": "语言将设为 $1；当前预览语言为 $2。" },
     { "pattern": "^Language set to (.+)\\. Current interface: (.+)\\.$", "replacement": "语言已设为 $1。当前界面：$2。" },
     { "pattern": "^Unsupported language '(.+)'\\. Use en, zh, or auto\\.$", "replacement": "不支持语言“$1”。请使用 en、zh 或 auto。" },
+    { "pattern": "^No profile declarations matched '(.+)'\\.$", "replacement": "没有 Profile 声明匹配“$1”。" },
+    { "pattern": "^Satisfied: (.+) \\| Attention: (.+) \\| Unverifiable: (.+)$", "replacement": "已满足：$1 | 需处理：$2 | 无法验证：$3" },
     { "pattern": "^(Git|Scoop) was installed(?: with Scoop)? but is not visible in this process\\. Open a new PowerShell window and run the command again\\.$", "replacement": "$1 已安装，但当前进程尚不可见。请打开新的 PowerShell 窗口后重试。" },
     { "pattern": "^Run this (.+) installer\\?$", "replacement": "运行这个 $1 安装器吗？" },
     { "pattern": "^Save and enable the resulting local '(.+)' profile\\?$", "replacement": "保存并启用生成的本地“$1”Profile 吗？" },
@@ -322,6 +336,11 @@
     { "source": "Install this Scoop manifest?", "target": "安装这个 Scoop manifest 吗？" },
     { "source": "Windows Documents directory could not be resolved.", "target": "无法解析 Windows 文档目录。" },
     { "source": "Software plan", "target": "软件计划" },
+    { "source": "Profile difference", "target": "Profile 差异" },
+    { "source": "No profile declarations are selected.", "target": "当前没有选中的 Profile 声明。" },
+    { "source": "All automatically verifiable profile declarations are satisfied.", "target": "所有可自动验证的 Profile 声明均已满足。" },
+    { "source": "Review missing, drifted, or unavailable declarations above.", "target": "请检查上方缺失、存在偏差或管理器不可用的声明。" },
+    { "source": "Extra installed software is not treated as drift. Run 'win scan' to review it.", "target": "额外安装的软件不视为偏差；可运行“win scan”查看。" },
     { "source": "Windows user profile directory could not be resolved.", "target": "无法解析 Windows 用户 Profile 目录。" },
     { "source": "-Args and -Hash can only be used with a direct EXE or MSI installer.", "target": "-Args 和 -Hash 只能用于直接安装 EXE 或 MSI。" },
     { "source": "Running pending migrations", "target": "运行待处理迁移" },
