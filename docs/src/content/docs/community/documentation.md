@@ -44,4 +44,6 @@ For interface changes, run `pnpm exec playwright install chromium` followed by `
 
 `pnpm audit signatures` checks registry signatures. This is not a claim that every dependency has independently verified build provenance; the trust-downgrade policy is an additional signal, not proof that a package is safe. Review lockfile changes and keep security exceptions narrow.
 
+The pnpm setup action uses a separate, integrity-locked npm bootstrap. Its implicit npm advisory request is disabled to avoid blocking initialization on that endpoint; this does not disable the project's explicit signature check. Signature verification is not a vulnerability scan.
+
 Publish through the existing GitHub Actions workflows. Do not run a second pnpm release system, add Changesets, or manually upload the generated site. Documentation commits do not require a Winenv version bump.
