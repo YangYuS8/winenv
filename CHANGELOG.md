@@ -1,3 +1,10 @@
+# [0.16.0](https://github.com/YangYuS8/winenv/compare/v0.15.0...v0.16.0) (2026-09-04)
+
+
+### Features
+
+* add read-only profile diff ([5f50923](https://github.com/YangYuS8/winenv/commit/5f509232db463298ace0a5949d6fee16f0dd9073))
+
 # [0.15.0](https://github.com/YangYuS8/winenv/compare/v0.14.0...v0.15.0) (2026-09-04)
 
 
