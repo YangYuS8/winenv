@@ -6,7 +6,7 @@ hero:
   text: 把 Windows 软件管理变简单
   tagline: 用一套短命令组织 WinGet、Scoop 与 mise。实时搜索、组合 Profile，也能无缝接入已经使用很久的电脑。
   image:
-    src: /logo.svg
+    src: /logo.png
     alt: Winenv
   actions:
     - theme: brand

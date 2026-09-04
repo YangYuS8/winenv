@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./docs/public/logo.png" alt="Winenv 标志" width="180">
+</p>
+
 # Winenv
 
 [English](./README.md)

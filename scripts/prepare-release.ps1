@@ -40,6 +40,14 @@ foreach ($file in $releaseFiles) {
     Copy-Item -Path $source -Destination $stage
 }
 
+$logo = Join-Path $root "docs/public/logo.png"
+if (-not (Test-Path $logo)) {
+    throw "Release file is missing: docs/public/logo.png"
+}
+$releasePublic = Join-Path $stage "docs/public"
+New-Item -ItemType Directory -Path $releasePublic -Force | Out-Null
+Copy-Item -Path $logo -Destination $releasePublic
+
 Copy-Item -Path (Join-Path $root "migrations") -Destination $stage -Recurse
 Copy-Item -Path (Join-Path $root "locales") -Destination $stage -Recurse
 Copy-Item -Path (Join-Path $root "src") -Destination $stage -Recurse

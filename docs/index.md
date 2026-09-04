@@ -6,7 +6,7 @@ hero:
   text: Make Windows software manageable
   tagline: One compact interface for WinGet, Scoop, and mise. Search live catalogs, compose profiles, and bring an existing PC under control without starting over.
   image:
-    src: /logo.svg
+    src: /logo.png
     alt: Winenv
   actions:
     - theme: brand

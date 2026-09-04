@@ -4,7 +4,7 @@ const repository = "https://github.com/YangYuS8/winenv";
 const site = "https://yangyus8.top/winenv";
 
 const commonTheme: DefaultTheme.Config = {
-  logo: "/logo.svg",
+  logo: "/logo.png",
   siteTitle: "Winenv",
   socialLinks: [{ icon: "github", link: repository }],
   search: { provider: "local" },
@@ -139,8 +139,10 @@ export default defineConfig({
   lastUpdated: true,
   sitemap: { hostname: `${site}/` },
   head: [
+    ["link", { rel: "icon", type: "image/png", href: "/winenv/favicon.png" }],
     ["meta", { name: "theme-color", content: "#356df3" }],
     ["meta", { property: "og:type", content: "website" }],
+    ["meta", { property: "og:image", content: `${site}/logo.png` }],
   ],
   locales: {
     root: {
