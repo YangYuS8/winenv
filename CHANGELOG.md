@@ -1,3 +1,10 @@
+# [0.15.0](https://github.com/YangYuS8/winenv/compare/v0.14.0...v0.15.0) (2026-09-04)
+
+
+### Features
+
+* modularize core with provider contract ([5ded0a8](https://github.com/YangYuS8/winenv/commit/5ded0a8c1fc9472dc59e05e2b427c6f5522ee046))
+
 # [0.14.0](https://github.com/YangYuS8/winenv/compare/v0.13.0...v0.14.0) (2026-09-03)
 
 
