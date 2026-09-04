@@ -49,6 +49,16 @@ test('entry detection respects manual choice and explicit URLs', () => {
   assert.equal(localeForPath('/winenv/guide/profiles/'), 'en');
 });
 
+test('site audit rejects unparsed bold in prose, but permits literal code examples', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'winenv-markdown-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const wrap = (content) => `<h1>Guide</h1><div class="sl-markdown-content">${content}</div>`;
+  await writeFile(path.join(directory, 'index.html'), wrap('<ul><li>**Scoop：**运行 <code>scoop help config</code></li></ul>'));
+  assert.ok((await auditSite(directory)).errors.some((error) => error.includes('unparsed bold marker')));
+  await writeFile(path.join(directory, 'index.html'), wrap('<ul><li><strong>Scoop</strong>：运行 <code>scoop help config</code></li></ul><code>**Scoop：**运行</code><pre>**literal**</pre><p>2 ** 3</p>') + '<script>"**not prose**"</script>');
+  assert.deepEqual((await auditSite(directory)).errors, []);
+});
+
 test('site audit checks rendered routes, assets, anchors, and legacy compatibility', async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'winenv-docs-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

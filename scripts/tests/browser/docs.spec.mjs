@@ -88,12 +88,20 @@ for (const [locale, heading, labels] of [
   });
 }
 
-for (const [locale, heading] of [['', 'Network and proxy'], ['zh/', '网络与代理']]) {
-  test(`network hints link to manual guidance in ${locale || 'English'}`, async ({ page }) => {
+for (const [locale, heading, labels] of [
+  ['', 'Network and proxy', ['WinGet:', 'Scoop:', 'mise:', 'Winenv bootstrap or shared-file downloads:']],
+  ['zh/', '网络与代理', ['WinGet', 'Scoop', 'mise', 'Winenv 安装脚本或共享文件下载']],
+]) {
+  test(`network hints link to formatted manual guidance in ${locale || 'English'}`, async ({ page }, testInfo) => {
     await page.goto(`/winenv/${locale}guide/troubleshooting/#network-and-proxy`);
     await expect(page.locator('#network-and-proxy')).toHaveCount(1);
     const content = page.locator('.sl-markdown-content');
     await expect(content.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+    const list = content.locator(':scope > ul');
+    await expect(list.locator(':scope > li')).toHaveCount(4);
+    await expect(list.locator(':scope > li > strong')).toHaveText(labels);
+    await expect(list).not.toContainText('**');
+    await expect(list.locator('code')).toHaveText(['scoop help config', 'http_proxy', 'https_proxy', 'Invoke-RestMethod', 'irm ... | iex']);
     for (const href of [
       'https://learn.microsoft.com/en-us/windows/package-manager/winget/settings',
       'https://github.com/ScoopInstaller/Scoop/blob/master/libexec/scoop-config.ps1',
@@ -101,6 +109,7 @@ for (const [locale, heading] of [['', 'Network and proxy'], ['zh/', '网络与�
     ]) {
       await expect(content.locator(`a[href="${href}"]`)).toBeVisible();
     }
+    await page.screenshot({ path: testInfo.outputPath('network-guidance.png'), fullPage: true });
   });
 }
 
