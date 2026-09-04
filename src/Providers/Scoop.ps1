@@ -482,15 +482,10 @@ function Install-ScoopManifest {
     }
 }
 
-function Install-ScoopPackage {
-    param($Package)
-    $qualifiedId = if ($Package.bucket) { "$($Package.bucket)/$($Package.id)" } else { [string]$Package.id }
-    Invoke-Native (Get-ResolvedManagerCommand "scoop") @("install", $qualifiedId)
-}
-
 function Invoke-ScoopProviderInstall {
     param($Package, $Context)
-    Install-ScoopPackage $Package
+    $qualifiedId = if ($Package.bucket) { "$($Package.bucket)/$($Package.id)" } else { [string]$Package.id }
+    Invoke-Native (Get-ResolvedManagerCommand "scoop") @("install", $qualifiedId)
 }
 
 function Invoke-ScoopProviderRemove {

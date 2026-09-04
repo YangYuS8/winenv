@@ -205,18 +205,13 @@ function Install-WinGetManifest {
     if (-not $DryRun) { Write-WinenvHost "Local WinGet manifest installed successfully." -ForegroundColor Green }
 }
 
-function Install-WinGetPackage {
-    param($Package)
+function Invoke-WinGetProviderInstall {
+    param($Package, $Context)
     $source = if ($Package.source) { [string]$Package.source } else { "winget" }
     Invoke-Native (Get-ResolvedManagerCommand "winget") @(
         "install", "--id", [string]$Package.id, "--exact", "--source", $source,
         "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"
     )
-}
-
-function Invoke-WinGetProviderInstall {
-    param($Package, $Context)
-    Install-WinGetPackage $Package
 }
 
 function Invoke-WinGetProviderRemove {
