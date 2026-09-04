@@ -9,10 +9,10 @@ sidebar:
 
 ## 先确定内容职责
 
-- **教程：**安全、完整的学习练习，例如[第一次使用](/winenv/zh/guide/first-steps/)。
-- **指南：**解决具体任务或问题，包括[故障排查](/winenv/zh/guide/troubleshooting/)。
-- **参考：**准确的命令、参数、存储路径和约束。
-- **解释：**说明模型为什么如此设计，例如[声明与归属](/winenv/zh/concepts/profiles-and-ownership/)。
+- **教程**：安全、完整的学习练习，例如[第一次使用](/winenv/zh/guide/first-steps/)。
+- **指南**：解决具体任务或问题，包括[故障排查](/winenv/zh/guide/troubleshooting/)。
+- **参考**：准确的命令、参数、存储路径和约束。
+- **解释**：说明模型为什么如此设计，例如[声明与归属](/winenv/zh/concepts/profiles-and-ownership/)。
 
 这些职责借鉴 [Diátaxis](https://diataxis.fr/)。先确定读者需求，再写内容；不要仅为了填满模板而创建空栏目。
 

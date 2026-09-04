@@ -72,6 +72,22 @@ test('mobile navigation works without horizontal overflow', async ({ page }, tes
   await page.screenshot({ path: testInfo.outputPath('mobile-reference.png'), fullPage: true });
 });
 
+for (const [locale, heading, labels] of [
+  ['', 'Choose a content responsibility', ['Tutorial:', 'Guide:', 'Reference:', 'Explanation:']],
+  ['zh/', '先确定内容职责', ['教程', '指南', '参考', '解释']],
+]) {
+  test(`content responsibilities render as a list with bold labels in ${locale || 'English'}`, async ({ page }, testInfo) => {
+    await page.goto(`/winenv/${locale}community/documentation/`);
+    const content = page.locator('.sl-markdown-content');
+    await expect(content.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+    const list = content.locator(':scope > ul').first();
+    await expect(list.locator(':scope > li')).toHaveCount(4);
+    await expect(list.locator(':scope > li > strong')).toHaveText(labels);
+    await expect(list).not.toContainText('**');
+    await page.screenshot({ path: testInfo.outputPath('content-responsibilities.png'), fullPage: true });
+  });
+}
+
 for (const locale of ['', 'zh/']) {
   for (const theme of ['light', 'dark']) {
     test(`accessibility smoke ${locale || 'en'} ${theme}`, async ({ page }, testInfo) => {
