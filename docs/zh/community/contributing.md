@@ -22,6 +22,8 @@ npm run docs:build
 
 测试覆盖 Profile 组合、管理器路由、现有系统纳入、安装器信任规则、国际化和 Windows PowerShell 兼容性。生产文档构建会验证两种语言。
 
+架构和 Provider 修改必须遵守 [RFC 0001](/zh/reference/architecture)。保持 `win.ps1` 为轻量兼容入口，并把实现函数放入对应的内部模块。
+
 ## Pull Request 要求
 
 - 每个 Pull Request 只解决一个完整问题

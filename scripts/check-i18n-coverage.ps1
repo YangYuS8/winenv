@@ -2,10 +2,17 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $entry = Join-Path $root "win.ps1"
 $resource = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $root "locales\zh-CN.json") | ConvertFrom-Json
-$tokens = $null
-$errors = $null
-$ast = [Management.Automation.Language.Parser]::ParseFile($entry, [ref]$tokens, [ref]$errors)
-if ($errors.Count -gt 0) { throw "Cannot inspect localization coverage because win.ps1 has parser errors." }
+$runtimeFiles = @(
+    Get-Item -LiteralPath $entry
+    Get-ChildItem -Path (Join-Path $root "src") -Filter "*.ps1" -File -Recurse
+)
+$asts = @(foreach ($runtimeFile in $runtimeFiles) {
+    $tokens = $null
+    $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($runtimeFile.FullName, [ref]$tokens, [ref]$errors)
+    if ($errors.Count -gt 0) { throw "Cannot inspect localization coverage because $($runtimeFile.FullName) has parser errors." }
+    $ast
+})
 
 function ConvertTo-TestLocalization {
     param([string]$Text)
@@ -23,10 +30,12 @@ function ConvertTo-TestLocalization {
 
 $messages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $localizedCommands = @("Write-WinenvHost", "Write-Step", "Write-Plan", "Read-WinenvHost", "Confirm-Operation")
-$commandAsts = $ast.FindAll({
-    param($node)
-    $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -in $localizedCommands
-}, $true)
+$commandAsts = @($asts | ForEach-Object {
+    $_.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -in $localizedCommands
+    }, $true)
+})
 foreach ($commandAst in $commandAsts) {
     if ($commandAst.CommandElements.Count -lt 2) { continue }
     $element = $commandAst.CommandElements[1]
@@ -46,7 +55,9 @@ foreach ($commandAst in $commandAsts) {
     }
 }
 
-foreach ($throwAst in $ast.FindAll({ param($node) $node -is [Management.Automation.Language.ThrowStatementAst] }, $true)) {
+foreach ($throwAst in @($asts | ForEach-Object {
+    $_.FindAll({ param($node) $node -is [Management.Automation.Language.ThrowStatementAst] }, $true)
+})) {
     $elements = @($throwAst.Pipeline.PipelineElements)
     if ($elements.Count -ne 1) { continue }
     $expression = $elements[0].Expression

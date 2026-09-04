@@ -22,6 +22,8 @@ npm run docs:build
 
 The tests cover profile composition, manager routing, existing-PC adoption, installer trust rules, localization, and compatibility with Windows PowerShell. The production docs build validates both locales.
 
+Architecture and provider changes must follow [RFC 0001](/reference/architecture). Keep `win.ps1` as a thin compatibility entry point and place implementation functions in the matching internal module.
+
 ## Pull request expectations
 
 - One coherent problem per pull request

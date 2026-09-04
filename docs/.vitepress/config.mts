@@ -33,6 +33,7 @@ const englishTheme: DefaultTheme.Config = {
       text: "Reference",
       items: [
         { text: "Command reference", link: "/reference/commands" },
+        { text: "Architecture and provider contract", link: "/reference/architecture" },
         { text: "State, storage, and security", link: "/reference/state-and-security" },
         { text: "Documentation and releases", link: "/reference/automation" },
       ],
@@ -79,6 +80,7 @@ const chineseTheme: DefaultTheme.Config = {
       text: "参考",
       items: [
         { text: "命令速查", link: "/zh/reference/commands" },
+        { text: "架构与 Provider 契约", link: "/zh/reference/architecture" },
         { text: "状态、存储与安全", link: "/zh/reference/state-and-security" },
         { text: "文档与发布自动化", link: "/zh/reference/automation" },
       ],

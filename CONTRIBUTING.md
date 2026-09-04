@@ -26,6 +26,12 @@ Winenv coordinates WinGet, Scoop, and mise on Windows 11. Changes should preserv
 
 Proposals outside these boundaries should begin as a feature request with a concrete user problem.
 
+## Architecture
+
+Read [RFC 0001](https://yangyus8.top/winenv/reference/architecture) before changing command routing, profile semantics, or a package manager. `win.ps1` is a thin compatibility entry point; implementation functions belong in the matching file under `src/`. Internal modules are not a public API and must not perform user actions merely because they were loaded.
+
+Provider changes must preserve the validated registry contract. A new provider requires an issue covering its machine-level responsibility, ownership model, unavailable behavior, privileges, trust, rollback, tests, and maintenance cost. Do not introduce a provider only to duplicate a project dependency manager or expose third-party code loading.
+
 ## Development setup
 
 Use Windows 11 with PowerShell 7 and Node.js 20 or newer. Fork the repository, create a focused branch, then install documentation and release dependencies:
@@ -51,6 +57,7 @@ CI repeats these checks on Windows. A production documentation build is required
 - Keep a pull request limited to one coherent problem.
 - Preserve unrelated user and repository changes.
 - Add or update tests for behavior changes and regressions.
+- Keep internal functions in one responsibility module and update architecture tests when module boundaries change.
 - Keep commands short for routine use while retaining compatible long forms when practical.
 - Do not silently elevate privileges, weaken Windows security settings, or broaden a trust decision.
 - Do not commit personal profiles, credentials, downloaded installers, generated documentation output, `VERSION`, or manual edits to `CHANGELOG.md`.

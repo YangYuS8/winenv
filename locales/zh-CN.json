@@ -83,6 +83,14 @@
     "Remove > ": "卸载 > "
   },
   "patterns": [
+    { "pattern": "^Winenv internal module is missing: (.+)$", "replacement": "Winenv 内部模块缺失：$1" },
+    { "pattern": "^Unknown provider: (.+)$", "replacement": "未知的 Provider：$1" },
+    { "pattern": "^Provider already registered: (.+)$", "replacement": "Provider 已注册：$1" },
+    { "pattern": "^Provider does not define any operations: (.+)$", "replacement": "Provider 未定义任何操作：$1" },
+    { "pattern": "^Unsupported provider operation '(.+)' for '(.+)'\\.$", "replacement": "Provider“$2”不支持操作“$1”。" },
+    { "pattern": "^Provider handler is unavailable: (.+)$", "replacement": "Provider 处理函数不可用：$1" },
+    { "pattern": "^Provider registry does not match profile owners: (.+)$", "replacement": "Provider 注册表与 Profile 归属不一致：$1" },
+    { "pattern": "^Provider '(.+)' does not support operation '(.+)'\\.$", "replacement": "Provider“$1”不支持操作“$2”。" },
     { "pattern": "^Language: (.+) \\((.+)\\)$", "replacement": "语言：$1（$2）" },
     { "pattern": "^Source:\\s+(.+)$", "replacement": "来源：$1" },
     { "pattern": "^Language would be set to (.+); current preview language is (.+)\\.$", "replacement": "语言将设为 $1；当前预览语言为 $2。" },

@@ -37,7 +37,9 @@ $env:MISE_CONFIG_DIR = Join-Path $testRoot "mise"
 $installedEntry = Join-Path $testRoot "Winenv\versions\$expectedVersion\win.ps1"
 $launcherEntry = Join-Path $testRoot "Winenv\bin\win-launch.ps1"
 $localeEntry = Join-Path $testRoot "Winenv\versions\$expectedVersion\locales\zh-CN.json"
-if (-not (Test-Path $installedEntry) -or -not (Test-Path $launcherEntry) -or -not (Test-Path $localeEntry)) {
+$providerEntry = Join-Path $testRoot "Winenv\versions\$expectedVersion\src\Providers\Provider.Contract.ps1"
+if (-not (Test-Path $installedEntry) -or -not (Test-Path $launcherEntry) -or
+    -not (Test-Path $localeEntry) -or -not (Test-Path $providerEntry)) {
     throw "The release installer did not create the expected files."
 }
 

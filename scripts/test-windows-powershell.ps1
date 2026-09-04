@@ -2,12 +2,17 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
 Write-Host "Checking Windows PowerShell compatibility..."
-foreach ($name in @("win.ps1", "install.ps1")) {
+$runtimeFiles = @(
+    Get-Item -LiteralPath (Join-Path $root "win.ps1")
+    Get-Item -LiteralPath (Join-Path $root "install.ps1")
+    Get-ChildItem -Path (Join-Path $root "src") -Filter "*.ps1" -File -Recurse
+)
+foreach ($file in $runtimeFiles) {
     $tokens = $null
     $errors = $null
-    [Management.Automation.Language.Parser]::ParseFile((Join-Path $root $name), [ref]$tokens, [ref]$errors) | Out-Null
+    [Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
     if ($errors.Count -gt 0) {
-        throw "$name is not compatible with this PowerShell parser: $($errors -join '; ')"
+        throw "$($file.FullName) is not compatible with this PowerShell parser: $($errors -join '; ')"
     }
 }
 

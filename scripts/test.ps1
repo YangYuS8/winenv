@@ -34,7 +34,12 @@ foreach ($candidatePath in @($profilePath)) {
 }
 
 Write-Host "Parsing PowerShell files..."
-foreach ($file in @(Get-ChildItem -Path $root -Filter "*.ps1" -File) + @(Get-ChildItem -Path $PSScriptRoot -Filter "*.ps1" -File)) {
+$powershellFiles = @(
+    @(Get-ChildItem -Path $root -Filter "*.ps1" -File)
+    @(Get-ChildItem -Path $PSScriptRoot -Filter "*.ps1" -File)
+    @(Get-ChildItem -Path (Join-Path $root "src") -Filter "*.ps1" -File -Recurse)
+)
+foreach ($file in $powershellFiles) {
     $tokens = $null
     $errors = $null
     [Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
@@ -45,6 +50,7 @@ foreach ($file in @(Get-ChildItem -Path $root -Filter "*.ps1" -File) + @(Get-Chi
 
 & (Join-Path $PSScriptRoot "test-i18n.ps1")
 & (Join-Path $PSScriptRoot "check-i18n-coverage.ps1")
+& (Join-Path $PSScriptRoot "test-architecture.ps1")
 
 Write-Host "Exercising command routes..."
 $testLocalAppData = Join-Path ([IO.Path]::GetTempPath()) ("winenv-tests-" + [Guid]::NewGuid().ToString("N"))

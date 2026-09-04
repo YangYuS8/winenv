@@ -42,6 +42,7 @@ win help            # 查看简明帮助
 - 内置 Profile 只包含 Winenv 运行所需能力；个人和社区 Profile 独立存放、自由组合。
 - 已经安装大量软件的电脑也能扫描并选择性纳入，不要求重装系统。
 - 版本、更新日志、带校验的 Release 资产和文档站均由 GitHub Actions 自动生成。
+- 稳定入口通过经过校验的 Provider 契约加载可独立测试的内部模块，详见 [RFC 0001](https://yangyus8.top/winenv/zh/reference/architecture)。
 
 ## 参与贡献
 

@@ -20,27 +20,36 @@ foreach ($locale in @("en-US", "zh-CN")) {
     }
 }
 
-$winSource = Get-Content -Raw -LiteralPath $entry
-if ($winSource -match "[^\x00-\x7F]") {
-    throw "win.ps1 must remain ASCII so Windows PowerShell can load it before locale resources."
+$runtimeFiles = @(
+    Get-Item -LiteralPath $entry
+    Get-ChildItem -Path (Join-Path $root "src") -Filter "*.ps1" -File -Recurse
+)
+foreach ($runtimeFile in $runtimeFiles) {
+    $runtimeSource = Get-Content -Raw -LiteralPath $runtimeFile.FullName
+    if ($runtimeSource -match "[^\x00-\x7F]") {
+        throw "$($runtimeFile.FullName) must remain ASCII for Windows PowerShell compatibility."
+    }
 }
 $installerSource = Get-Content -Raw -LiteralPath (Join-Path $root "install.ps1")
 if ($installerSource -match "[^\x00-\x7F]") {
     throw "install.ps1 must remain ASCII for Windows PowerShell bootstrap compatibility."
 }
-$tokens = $null
-$errors = $null
-$winAst = [Management.Automation.Language.Parser]::ParseInput($winSource, [ref]$tokens, [ref]$errors)
 foreach ($command in @("Write-Host", "Read-Host", "Format-Table")) {
-    $bypasses = @($winAst.FindAll({
-        param($node)
-        $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq $command
-    }, $true) | Where-Object {
-        $parent = $_.Parent
-        while ($null -ne $parent -and $parent -isnot [Management.Automation.Language.FunctionDefinitionAst]) {
-            $parent = $parent.Parent
+    $bypasses = @(foreach ($runtimeFile in $runtimeFiles) {
+        $tokens = $null
+        $errors = $null
+        $runtimeAst = [Management.Automation.Language.Parser]::ParseFile($runtimeFile.FullName, [ref]$tokens, [ref]$errors)
+        if ($errors.Count -gt 0) { throw "Cannot inspect localization calls in $($runtimeFile.FullName)." }
+        $runtimeAst.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq $command
+        }, $true) | Where-Object {
+            $parent = $_.Parent
+            while ($null -ne $parent -and $parent -isnot [Management.Automation.Language.FunctionDefinitionAst]) {
+                $parent = $parent.Parent
+            }
+            -not ($command -eq "Read-Host" -and $null -ne $parent -and $parent.Name -eq "Read-WinenvHost")
         }
-        -not ($command -eq "Read-Host" -and $null -ne $parent -and $parent.Name -eq "Read-WinenvHost")
     })
     if ($bypasses.Count -gt 0) { throw "win.ps1 bypasses the localization wrapper with $command." }
 }
