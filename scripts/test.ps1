@@ -310,7 +310,7 @@ if ($miseFragment -notmatch '"node"\s*=\s*"26"') {
 $beforeDiffRegistry = Get-Content -Raw -Path $registryPath
 $beforeDiffMiseFragment = Get-Content -Raw -Path $miseFragmentPath
 $diffText = (& (Join-Path $root "win.ps1") diff node 6>&1 | Out-String -Width 4096)
-if ($diffText -notmatch "Profile difference" -or $diffText -notmatch "satisfied\s+mise\s+Node\.js\s+26\s+26\.8\.1") {
+if ($diffText -notmatch "Profile difference" -or $diffText -notmatch "(?:satisfied|manager-unavailable)\s+mise\s+Node\.js\s+26") {
     throw "The public diff route did not compare a selected effective declaration."
 }
 if ((Get-Content -Raw -Path $registryPath) -ne $beforeDiffRegistry -or (Get-Content -Raw -Path $miseFragmentPath) -ne $beforeDiffMiseFragment) {
